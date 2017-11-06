@@ -1,0 +1,18 @@
+[package]
+name = "media-depot"
+version = "0.1.0"
+authors = ["Charles Tabor <chastabor@gmail.com>"]
+
+[dependencies]
+futures = "^0.1.16"
+rustls = "^0.11"
+hyper = "^0.11"
+tokio-rustls = { version = "^0.4.0", features = ["tokio-proto"] }
+tokio-proto = "^0.1.1"
+url = "^0.2"
+xml-rs = "^0.3"
+#cookie = { version = "^0.10.1", features = ["percent-encode", "secure"] }
+# keep following in sync with rustls
+ring  = "0.12.1"
+percent-encoding = "1.0.0"
+base64 = "0.6.0"
