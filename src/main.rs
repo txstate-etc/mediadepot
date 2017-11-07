@@ -35,70 +35,36 @@ impl<'a> Service for Router<'a> {
     type Future = FutureResult<Response, hyper::Error>;
 
     fn call(&self, req: Request) -> Self::Future {
-        futures::future::ok(
-            match (req.method(), req.path()) {
-                // Health checks. TODO: Verify key files may be accessible
-                (&Get, "/health") => {
-                    Response::new()
-                        .with_header(ContentType(mime::TEXT_PLAIN))
-                        .with_header(ContentLength(INDEX.len() as u64))
-                        .with_body(INDEX)
-                }
-                // CSS and image resource files
-                (&Get, "/static") => {
-                    let body = "<!DOCTYPE html><html><head><meta charset=\"utf-8\" /><title>files</title></head><body>This will be replaced with resource file headers and content</body>";
-                    Response::new()
-                        .with_header(ContentLength(body.len() as u64))
-                        .with_body(body)
-                }
-                // Allow to logout without checking if logged in;
-                // so if a valid CAS user (authentication), but does
-                // NOT have authorization to access any routes, the
-                // user can still log out.
-                (&Get, "/logout") => {
-                    if let Ok(c) = cookie::Cookie::new(Some(cookie::CookiePrefix::HOST), "id", "", Some(self.key)) {
-                        let body = "<!DOCTYPE html><html><head><meta charset=\"utf-8\" /><title>clear cookie</title></head><body>Cleared id cookie.</body>";
+        if let Ok(paths) = paths(req.path()) {
+            futures::future::ok(
+                match (req.method(), &(paths[0])[..]) {
+                    // Health checks. TODO: Verify key files may be accessible
+                    (&Get, "health") => {
                         Response::new()
-                            .with_header(ContentLength(body.len() as u64))
-                            .with_header(
-                                hyper::header::SetCookie(vec![
-                                    c.with_path(Some("/"))
-                                        .clear()
-                                        .with_secure(true)
-                                        .with_http_only(true)
-                                        .with_same_site(Some(cookie::SameSite::LAX))
-                                        .get_full_value()
-                                ])
-                            )
-                            .with_body(body)
-                    } else {
-                        let body = "<!DOCTYPE html><html><head><meta charset=\"utf-8\" /><title>clear cookie</title></head><body>Unable to clear id cookie.</body>";
+                            .with_header(ContentType(mime::TEXT_PLAIN))
+                            .with_header(ContentLength(INDEX.len() as u64))
+                            .with_body(INDEX)
+                    }
+                    // CSS and image resource files
+                    (&Get, "static") => {
+                        let body = "<!DOCTYPE html><html><head><meta charset=\"utf-8\" /><title>files</title></head><body>This will be replaced with resource file headers and content</body>";
                         Response::new()
                             .with_header(ContentLength(body.len() as u64))
                             .with_body(body)
                     }
-                }
-                // route were single page application will be accessed.
-                (&Get, "/") | (&Get, "/get_set_cookie") => {
-                    if let Some(c) = cookie::Cookie::from_request(&req, Some(cookie::CookiePrefix::HOST), "id") {
-                        // Cookie was found
-                        let body = if let Ok(id) = c.get_value(Some(self.key)) {
-                            "<!DOCTYPE html><html><head><meta charset=\"utf-8\" /><title>get cookie</title></head><body>id = ".to_string() + &id[..] + "</body>"
-                        } else {
-                            "<!DOCTYPE html><html><head><meta charset=\"utf-8\" /><title>get cookie</title></head><body>Error retrieving id cookie.</body>".to_string()
-                        };
-                        Response::new()
-                            .with_header(ContentLength(body.len() as u64))
-                            .with_body(body)
-                    } else { 
-                        // No cookie was found
-                        if let Ok(c) = cookie::Cookie::new(Some(cookie::CookiePrefix::HOST), "id", "test-id", Some(self.key)) {
-                            let body = "<!DOCTYPE html><html><head><meta charset=\"utf-8\" /><title>set cookie</title></head><body>set id cookie.</body>";
+                    // Allow to logout without checking if logged in;
+                    // so if a valid CAS user (authentication), but does
+                    // NOT have authorization to access any routes, the
+                    // user can still log out.
+                    (&Get, "logout") => {
+                        if let Ok(c) = cookie::Cookie::new(Some(cookie::CookiePrefix::HOST), "id", "", Some(self.key)) {
+                            let body = "<!DOCTYPE html><html><head><meta charset=\"utf-8\" /><title>clear cookie</title></head><body>Cleared id cookie.</body>";
                             Response::new()
                                 .with_header(ContentLength(body.len() as u64))
                                 .with_header(
                                     hyper::header::SetCookie(vec![
                                         c.with_path(Some("/"))
+                                            .clear()
                                             .with_secure(true)
                                             .with_http_only(true)
                                             .with_same_site(Some(cookie::SameSite::LAX))
@@ -107,16 +73,55 @@ impl<'a> Service for Router<'a> {
                                 )
                                 .with_body(body)
                         } else {
-                            let body = "<!DOCTYPE html><html><head><meta charset=\"utf-8\" /><title>set cookie</title></head><body>Unable to set id cookie.</body>";
+                            let body = "<!DOCTYPE html><html><head><meta charset=\"utf-8\" /><title>clear cookie</title></head><body>Unable to clear id cookie.</body>";
                             Response::new()
                                 .with_header(ContentLength(body.len() as u64))
                                 .with_body(body)
                         }
                     }
+                    // route were single page application will be accessed.
+                    (&Get, "/") | (&Get, "get_set_cookie") => {
+                        if let Some(c) = cookie::Cookie::from_request(&req, Some(cookie::CookiePrefix::HOST), "id") {
+                            // Cookie was found
+                            let body = if let Ok(id) = c.get_value(Some(self.key)) {
+                                "<!DOCTYPE html><html><head><meta charset=\"utf-8\" /><title>get cookie</title></head><body>id = ".to_string() + &id[..] + "</body>"
+                            } else {
+                                "<!DOCTYPE html><html><head><meta charset=\"utf-8\" /><title>get cookie</title></head><body>Error retrieving id cookie.</body>".to_string()
+                            };
+                            // TODO: Content-Disposition header should be set for downloading videos
+                            Response::new()
+                                .with_header(ContentLength(body.len() as u64))
+                                .with_body(body)
+                        } else { 
+                            // No cookie was found
+                            if let Ok(c) = cookie::Cookie::new(Some(cookie::CookiePrefix::HOST), "id", "test-id", Some(self.key)) {
+                                let body = "<!DOCTYPE html><html><head><meta charset=\"utf-8\" /><title>set cookie</title></head><body>set id cookie.</body>";
+                                Response::new()
+                                    .with_header(ContentLength(body.len() as u64))
+                                    .with_header(
+                                        hyper::header::SetCookie(vec![
+                                            c.with_path(Some("/"))
+                                                .with_secure(true)
+                                                .with_http_only(true)
+                                                .with_same_site(Some(cookie::SameSite::LAX))
+                                                .get_full_value()
+                                        ])
+                                    )
+                                    .with_body(body)
+                            } else {
+                                let body = "<!DOCTYPE html><html><head><meta charset=\"utf-8\" /><title>set cookie</title></head><body>Unable to set id cookie.</body>";
+                                Response::new()
+                                    .with_header(ContentLength(body.len() as u64))
+                                    .with_body(body)
+                            }
+                        }
+                    }
+                    _ => Response::new().with_status(StatusCode::NotFound),
                 }
-                _ => Response::new().with_status(StatusCode::NotFound),
-            }
-        )
+            )
+        } else {
+            futures::future::ok(Response::new().with_status(StatusCode::NotFound))
+        }
     }
 }
 
@@ -130,7 +135,9 @@ fn not_whitelist_char(c: char) -> bool {
 }
 
 /// Whitelist allowed characters, remove .. within
-/// percent decoded path segments.
+/// percent decoded path segments. The result will always
+/// be either an Err or a Ok type with a vector of at least
+/// one entry.
 fn paths(path: &str) -> Result<Vec<String>, &'static str> {
     let mut paths = Vec::new();
     let segments = path.split("/");
@@ -140,13 +147,21 @@ fn paths(path: &str) -> Result<Vec<String>, &'static str> {
             .map_err(|_| "Invalid percent decoded value in path.")?;
         if decoded == ".." {
             paths.pop();
+        } else if decoded == "" {
+            continue;
         } else if decoded.starts_with('.') {
             return Err("Path contains hidden directory.")
         } else if decoded.contains(not_whitelist_char) {
             return Err("Path contains a non-whitelisted character.")
         } else {
-            paths.push(decoded.to_string());
+            paths.push(decoded.into_owned());
         }
+    }
+    // NOTE: hyper request path will at the very least should send back
+    // a "/" if the path submitted was empty, however we could get a
+    // "/.." path which would generate an empty vector which must be fixed
+    if paths.len() == 0 {
+      paths.push("/".to_string());
     }
     Ok(paths)
 }
@@ -171,7 +186,7 @@ lazy_static! {
     static ref COOKIE_KEY: Key = {
         let cookie_key_result = match env::var("MASTERKEY") {
            Ok(master_key) => Key::new(Some(&master_key[..])),
-           Err(e) => Key::new(None),
+           Err(_) => Key::new(None),
         };
         if let Ok(cookie_key) = cookie_key_result {
             cookie_key
