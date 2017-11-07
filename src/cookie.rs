@@ -249,9 +249,8 @@ impl<'d, 'p> Cookie<'d, 'p> {
         (format!("{}", self)).to_string()
     }
 
-    pub fn clear (mut self) -> Self {
-        self.max_age = Some(Duration::new(0, 0));
-        self
+    pub fn clear (self) -> Self {
+        self.with_max_age(Some(Duration::new(0, 0)))
     }
 
     pub fn with_max_age(mut self, max_age: Option<Duration>) -> Self {
