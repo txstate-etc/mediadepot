@@ -6,6 +6,7 @@ extern crate tokio_rustls;
 extern crate ring;
 extern crate base64;
 extern crate percent_encoding;
+#[macro_use] extern crate lazy_static;
 
 mod key;
 mod cookie;
@@ -18,6 +19,7 @@ use hyper::{Get, StatusCode}; //Post
 use tokio_rustls::proto;
 use rustls::internal::pemfile;
 use key::Key;
+use std::env;
 
 static INDEX: &'static [u8] = b"Service is up\n";
 
@@ -42,13 +44,17 @@ impl<'a> Service for Router<'a> {
                         .with_header(ContentLength(INDEX.len() as u64))
                         .with_body(INDEX)
                 }
+                // CSS and image resource files
                 (&Get, "/static") => {
-                    // CSS and image resource files
                     let body = "<!DOCTYPE html><html><head><meta charset=\"utf-8\" /><title>files</title></head><body>This will be replaced with resource file headers and content</body>";
                     Response::new()
                         .with_header(ContentLength(body.len() as u64))
                         .with_body(body)
                 }
+                // Allow to logout without checking if logged in;
+                // so if a valid CAS user (authentication), but does
+                // NOT have authorization to access any routes, the
+                // user can still log out.
                 (&Get, "/logout") => {
                     if let Ok(c) = cookie::Cookie::new(Some(cookie::CookiePrefix::HOST), "id", "", Some(self.key)) {
                         let body = "<!DOCTYPE html><html><head><meta charset=\"utf-8\" /><title>clear cookie</title></head><body>Cleared id cookie.</body>";
@@ -72,6 +78,7 @@ impl<'a> Service for Router<'a> {
                             .with_body(body)
                     }
                 }
+                // route were single page application will be accessed.
                 (&Get, "/") | (&Get, "/get_set_cookie") => {
                     if let Some(c) = cookie::Cookie::from_request(&req, Some(cookie::CookiePrefix::HOST), "id") {
                         // Cookie was found
@@ -159,18 +166,23 @@ fn load_private_key(filename: &str) -> rustls::PrivateKey {
     keys[0].clone()
 }
 
-static mut COOKIE_KEY_OPTION: Option<Key> = None;
-
-fn main() {
-    let master_key = "sVdCPIwy2URfikVQiBH1Z+Jz39mibRG7viq42oYapTA=";
-    let cookie_key = unsafe {
-        COOKIE_KEY_OPTION = Some(Key::new(Some(master_key)).unwrap());
-        if let Some(ref cookie_key) = COOKIE_KEY_OPTION {
+//test MASTERKEY: sVdCPIwy2URfikVQiBH1Z+Jz39mibRG7viq42oYapTA=
+lazy_static! {
+    static ref COOKIE_KEY: Key = {
+        let cookie_key_result = match env::var("MASTERKEY") {
+           Ok(master_key) => Key::new(Some(&master_key[..])),
+           Err(e) => Key::new(None),
+        };
+        if let Ok(cookie_key) = cookie_key_result {
             cookie_key
         } else {
-            panic!("Was not able to get cookie key");
+            panic!("Issue generating cookie key.");
         }
     };
+}
+
+fn main() {
+    let cookie_key = &COOKIE_KEY;
     let router = Router{key: cookie_key};
     let port = match std::env::args().nth(1) {
         Some(ref p) => p.to_owned(),

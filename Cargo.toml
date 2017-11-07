@@ -1,6 +1,6 @@
 [package]
 name = "media-depot"
-version = "0.1.0"
+version = "0.1.1"
 authors = ["Charles Tabor <chastabor@gmail.com>"]
 
 [dependencies]
@@ -16,3 +16,4 @@ xml-rs = "^0.3"
 ring  = "0.12.1"
 percent-encoding = "1.0.0"
 base64 = "0.6.0"
+lazy_static = "0.2.9"
