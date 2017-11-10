@@ -40,7 +40,11 @@ struct Router<'a> {
 
 impl<'a> Router<'a> {
     fn service_url(&self, paths: &Vec<String>) -> String {
-        utf8_percent_encode(&(self.domain.to_string()+ &(paths.join("/"))[..])[..],
+        let mut path = paths.join("/");
+        if !path.starts_with("/") {
+            path = "/".to_string() + &path[..]
+        }
+        utf8_percent_encode(&(self.domain.to_string()+ &path[..])[..],
             DEFAULT_ENCODE_SET
         ).to_string()
     }
@@ -79,7 +83,7 @@ impl<'a> Service for Router<'a> {
                     // user can still log out.
                     (&Get, "logout") => {
                         if let Ok(c) = cookie::Cookie::new(Some(cookie::CookiePrefix::HOST), "id", "", Some(self.key)) {
-                            self.cas.logout_redirect()
+                            self.cas.logout_redirect(&self.service_url(&vec!["/".to_string()]))
                                 .with_header(
                                     hyper::header::SetCookie(vec![
                                         c.with_path(Some("/"))

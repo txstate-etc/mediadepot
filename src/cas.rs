@@ -114,10 +114,10 @@ impl CasClient {
     /// Does not clear any session cookies; so those set-cookies must
     /// be added to this response before returning the response to the
     /// client.
-    pub fn logout_redirect(&self) -> Response {
+    pub fn logout_redirect(&self, service_url: &str) -> Response {
         Response::new()
             .with_status(StatusCode::Found)
-            .with_header(Location::new(self.logout_url.to_string()))
+            .with_header(Location::new(self.logout_url.to_string() + "?url=" + service_url ))
     }
 
     /// When login completes, the CAS server will redirect to your service_url
