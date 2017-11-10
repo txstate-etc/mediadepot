@@ -1,5 +1,5 @@
 [package]
-name = "media-depot"
+name = "mediadepot"
 version = "0.1.1"
 authors = ["Charles Tabor <chastabor@gmail.com>"]
 
@@ -7,10 +7,15 @@ authors = ["Charles Tabor <chastabor@gmail.com>"]
 futures = "^0.1.16"
 rustls = "^0.11"
 hyper = "^0.11"
+tokio-core = "^0.1"
 tokio-rustls = { version = "^0.4.0", features = ["tokio-proto"] }
 tokio-proto = "^0.1.1"
+# Use rustls for front end to stick with rust protected ssl
+hyper-rustls = "0.11.0"
+# use openssl for backend CAS requests as it doesn't implement forward secrecy
+hyper-openssl = "0.3.0"
 url = "^0.2"
-xml-rs = "^0.3"
+xml-rs = "^0.7"
 #cookie = { version = "^0.10.1", features = ["percent-encode", "secure"] }
 # keep following in sync with rustls
 ring  = "0.12.1"

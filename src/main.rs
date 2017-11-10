@@ -1,31 +1,49 @@
 extern crate futures;
 extern crate hyper;
 extern crate rustls;
+extern crate tokio_core;
 extern crate tokio_proto;
 extern crate tokio_rustls;
+extern crate hyper_rustls;
+extern crate hyper_openssl;
 extern crate ring;
 extern crate base64;
 extern crate percent_encoding;
+extern crate xml;
 #[macro_use] extern crate lazy_static;
 
 mod key;
 mod cookie;
+mod cas;
 
 use futures::future::FutureResult;
 use hyper::header::{ContentLength, ContentType};
 use hyper::mime;
 use hyper::server::{Http, Service, Request, Response};
-use hyper::{Get, StatusCode}; //Post
+use hyper::{Get, Post, StatusCode};
 use tokio_rustls::proto;
 use rustls::internal::pemfile;
-use key::Key;
 use std::env;
+use key::Key;
+use cas::CasClient;
+use hyper::Uri;
+use percent_encoding::{utf8_percent_encode, DEFAULT_ENCODE_SET};
 
 static INDEX: &'static [u8] = b"Service is up\n";
 
 #[derive(Clone, Copy)]
 struct Router<'a> {
     key: &'a Key,
+    domain: &'a Uri,
+    cas: &'a CasClient,
+}
+
+impl<'a> Router<'a> {
+    fn service_url(&self, paths: &Vec<String>) -> String {
+        utf8_percent_encode(&(self.domain.to_string()+ &(paths.join("/"))[..])[..],
+            DEFAULT_ENCODE_SET
+        ).to_string()
+    }
 }
 
 impl<'a> Service for Router<'a> {
@@ -35,7 +53,10 @@ impl<'a> Service for Router<'a> {
     type Future = FutureResult<Response, hyper::Error>;
 
     fn call(&self, req: Request) -> Self::Future {
+        print!("[REQUEST] {:?}\n", req);
         if let Ok(paths) = paths(req.path()) {
+            //https://tokio-rs.github.io/tokio-middleware/src/tokio_middleware/log.rs.html
+            //  print!("[REQUEST] {:?}\n", req); // NOTE req.remote_addr() was None when using 127.0.0.1 host address.
             futures::future::ok(
                 match (req.method(), &(paths[0])[..]) {
                     // Health checks. TODO: Verify key files may be accessible
@@ -58,9 +79,7 @@ impl<'a> Service for Router<'a> {
                     // user can still log out.
                     (&Get, "logout") => {
                         if let Ok(c) = cookie::Cookie::new(Some(cookie::CookiePrefix::HOST), "id", "", Some(self.key)) {
-                            let body = "<!DOCTYPE html><html><head><meta charset=\"utf-8\" /><title>clear cookie</title></head><body>Cleared id cookie.</body>";
-                            Response::new()
-                                .with_header(ContentLength(body.len() as u64))
+                            self.cas.logout_redirect()
                                 .with_header(
                                     hyper::header::SetCookie(vec![
                                         c.with_path(Some("/"))
@@ -71,50 +90,92 @@ impl<'a> Service for Router<'a> {
                                             .get_full_value()
                                     ])
                                 )
-                                .with_body(body)
                         } else {
-                            let body = "<!DOCTYPE html><html><head><meta charset=\"utf-8\" /><title>clear cookie</title></head><body>Unable to clear id cookie.</body>";
+                            let body = "<!DOCTYPE html><html><head><meta charset=\"utf-8\" /><title>500 logout - clear session error</title></head><body>Unable to clear session.</body>";
                             Response::new()
+                                .with_status(StatusCode::InternalServerError)
                                 .with_header(ContentLength(body.len() as u64))
                                 .with_body(body)
                         }
                     }
-                    // route were single page application will be accessed.
-                    (&Get, "/") | (&Get, "get_set_cookie") => {
+                    // CAS infrastructure
+                    // Route/Path were single page application will be accessed.
+                    (&Get, "/") | (&Get, "files") => {
                         if let Some(c) = cookie::Cookie::from_request(&req, Some(cookie::CookiePrefix::HOST), "id") {
-                            // Cookie was found
-                            let body = if let Ok(id) = c.get_value(Some(self.key)) {
-                                "<!DOCTYPE html><html><head><meta charset=\"utf-8\" /><title>get cookie</title></head><body>id = ".to_string() + &id[..] + "</body>"
+                            // Session cookie found (get ID)
+                            if let Ok(id) = c.get_value(Some(self.key)) {
+                                // Valid session cookie so manage request
+                                let body = "<!DOCTYPE html><html><head><meta charset=\"utf-8\" /><title>get cookie</title></head><body>id = ".to_string() + &id[..] + "</body>";
+                                Response::new()
+                                    .with_status(StatusCode::InternalServerError)
+                                    .with_header(ContentLength(body.len() as u64))
+                                    .with_body(body)
+                            // Invalid session cookie; so clear out session cookie and redirect CAS login
                             } else {
-                                "<!DOCTYPE html><html><head><meta charset=\"utf-8\" /><title>get cookie</title></head><body>Error retrieving id cookie.</body>".to_string()
-                            };
+                                if let Ok(c) = cookie::Cookie::new(Some(cookie::CookiePrefix::HOST), "id", "", Some(self.key)) {
+                                    self.cas.login_redirect(&self.service_url(&paths)[..])
+                                        .with_header(
+                                            hyper::header::SetCookie(vec![
+                                                c.with_path(Some("/"))
+                                                    .clear()
+                                                    .with_secure(true)
+                                                    .with_http_only(true)
+                                                    .with_same_site(Some(cookie::SameSite::LAX))
+                                                    .get_full_value()
+                                            ])
+                                        )
+                                } else {
+                                    let body = "<!DOCTYPE html><html><head><meta charset=\"utf-8\" /><title>500 login retry - clear session error</title></head><body>Unable to clear session in attempt to retry login.</body>";
+                                    Response::new()
+                                        .with_status(StatusCode::InternalServerError)
+                                        .with_header(ContentLength(body.len() as u64))
+                                        .with_body(body)
+                                }
+                            }
                             // TODO: Content-Disposition header should be set for downloading videos
-                            Response::new()
-                                .with_header(ContentLength(body.len() as u64))
-                                .with_body(body)
                         } else { 
-                            // No cookie was found
-                            if let Ok(c) = cookie::Cookie::new(Some(cookie::CookiePrefix::HOST), "id", "test-id", Some(self.key)) {
-                                let body = "<!DOCTYPE html><html><head><meta charset=\"utf-8\" /><title>set cookie</title></head><body>set id cookie.</body>";
-                                Response::new()
-                                    .with_header(ContentLength(body.len() as u64))
-                                    .with_header(
-                                        hyper::header::SetCookie(vec![
-                                            c.with_path(Some("/"))
-                                                .with_secure(true)
-                                                .with_http_only(true)
-                                                .with_same_site(Some(cookie::SameSite::LAX))
-                                                .get_full_value()
-                                        ])
-                                    )
-                                    .with_body(body)
-                            } else {
-                                let body = "<!DOCTYPE html><html><head><meta charset=\"utf-8\" /><title>set cookie</title></head><body>Unable to set id cookie.</body>";
-                                Response::new()
-                                    .with_header(ContentLength(body.len() as u64))
-                                    .with_body(body)
+                            // Session cookie was not found
+                            match self.cas.verify_from_request(req.uri().query(), &self.service_url(&paths)[..]) {
+                                // If this was a redirect from CAS with token then verify and setup session cookie.
+                                Ok(cas::ServiceResponse::Success(id)) => {
+                                    if let Ok(c) = cookie::Cookie::new(Some(cookie::CookiePrefix::HOST), "id", &id[..], Some(self.key)) {
+                                        let body = "<!DOCTYPE html><html><head><meta charset=\"utf-8\" /><title>set session</title></head><body>set id cookie.</body>";
+                                        Response::new()
+                                            .with_header(ContentLength(body.len() as u64))
+                                            .with_header(
+                                                hyper::header::SetCookie(vec![
+                                                    c.with_path(Some("/"))
+                                                        .with_secure(true)
+                                                        .with_http_only(true)
+                                                        .with_same_site(Some(cookie::SameSite::LAX))
+                                                        .get_full_value()
+                                                ])
+                                            )
+                                            .with_body(body)
+                                    } else {
+                                        let body = "<!DOCTYPE html><html><head><meta charset=\"utf-8\" /><title>500 login - set session error</title></head><body>Unable to set session.</body>";
+                                        Response::new()
+                                            .with_status(StatusCode::InternalServerError)
+                                            .with_header(ContentLength(body.len() as u64))
+                                            .with_body(body)
+                                    }
+                                }
+                                // If not a redirect from CAS, or Ticket error, then redirect to CAS (Make sure not to run into infinite loop)
+                                Ok(cas::ServiceResponse::Failure(e)) => {
+                                    print!("[CAS VERIFY RESPONSE] {:?}\n", e);
+                                    self.cas.login_redirect(&self.service_url(&paths)[..])
+                                }
+                                Err(e) => {
+                                    print!("[CAS VERIFY RESPONSE] {:?}\n", e);
+                                    self.cas.login_redirect(&self.service_url(&paths)[..])
+                                }
                             }
                         }
+                    }
+                    // Generally CAS server announcements of SSO logouts
+                    (&Post, _) => {
+                       //print!("[REQUEST] {:?}", req);
+                       Response::new()
                     }
                     _ => Response::new().with_status(StatusCode::NotFound),
                 }
@@ -181,30 +242,46 @@ fn load_private_key(filename: &str) -> rustls::PrivateKey {
     keys[0].clone()
 }
 
-//test MASTERKEY: sVdCPIwy2URfikVQiBH1Z+Jz39mibRG7viq42oYapTA=
+
+// ```openssl rand -base64 32```
+// example: MASTERKEY=sVdCPIwy2URfikVQiBH1Z+Jz39mibRG7viq42oYapTA=
 lazy_static! {
     static ref COOKIE_KEY: Key = {
-        let cookie_key_result = match env::var("MASTERKEY") {
-           Ok(master_key) => Key::new(Some(&master_key[..])),
-           Err(_) => Key::new(None),
-        };
-        if let Ok(cookie_key) = cookie_key_result {
-            cookie_key
-        } else {
-            panic!("Issue generating cookie key.");
+        match env::var("MASTERKEY") {
+           Ok(master_key) => Key::new(Some(&master_key[..])).unwrap(),
+           Err(_) => Key::new(None).unwrap(),
+        }
+    };
+}
+
+// example: DOMAIN=https://mediadepot-qa1.its.txstate.edu:8443
+lazy_static! {
+    static ref DOMAIN: Uri = {
+        match env::var("DOMAIN") {
+           Ok(domain) => domain.parse::<Uri>().unwrap(),
+           Err(_) => panic!("No DOMAIN defined."),
+        }
+    };
+}
+
+// example: CASURL=https://login.its.qual.txstate.edu/cas
+lazy_static! {
+    static ref CAS_CLIENT: CasClient = {
+        match env::var("CASURL") {
+           Ok(cas_url) => CasClient::new(&cas_url[..], "/login", "/logout", "/p3/serviceValidate").unwrap(),
+           Err(_) => panic!("No CASURL defined."),
         }
     };
 }
 
 fn main() {
-    let cookie_key = &COOKIE_KEY;
-    let router = Router{key: cookie_key};
-    let port = match std::env::args().nth(1) {
-        Some(ref p) => p.to_owned(),
-        None => "8443".to_owned(),
+    let router = Router{key: &COOKIE_KEY, domain: &DOMAIN, cas: &CAS_CLIENT};
+    let address = match std::env::var("ADDRESS") {
+        Ok(a) => a.to_owned(),
+        Err(_)  => "127.0.0.1:8443".to_owned(),
     };
-    let addr = format!("127.0.0.1:{}", port).parse().unwrap();
-    let certs = load_certs("private/local.pem");
+    let addr = address.parse().unwrap();
+    let certs = load_certs("private/local.cert.pem");
     let certs_key = load_private_key("private/local.key.pem");
     let mut cfg = rustls::ServerConfig::new();
     cfg.set_single_cert(certs, certs_key);
