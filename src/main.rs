@@ -17,7 +17,9 @@ mod cookie;
 mod cas;
 mod router;
 
-use tokio_rustls::proto;
+use futures::{Future, Stream};
+use tokio_core::net::TcpListener;
+use tokio_core::reactor::Core;
 use rustls::internal::pemfile;
 use std::env;
 use key::Key;
@@ -25,6 +27,7 @@ use cas::CasClient;
 use hyper::Uri;
 use hyper::server::Http;
 use router::Router;
+use tokio_rustls::ServerConfigExt;
 
 fn load_certs(filename: &str) -> Vec<rustls::Certificate> {
     let certfile = std::fs::File::open(filename).expect("cannot open certificate file");
@@ -72,7 +75,6 @@ lazy_static! {
 }
 
 fn main() {
-    let router = Router::new(&COOKIE_KEY, &DOMAIN, &CAS_CLIENT);
     let address = match std::env::var("ADDRESS") {
         Ok(a) => a.to_owned(),
         Err(_)  => "127.0.0.1:8443".to_owned(),
@@ -80,10 +82,27 @@ fn main() {
     let addr = address.parse().unwrap();
     let certs = load_certs("private/local.cert.pem");
     let certs_key = load_private_key("private/local.key.pem");
-    let mut cfg = rustls::ServerConfig::new();
-    cfg.set_single_cert(certs, certs_key);
-    let tls = proto::Server::new(Http::new(), std::sync::Arc::new(cfg));
-    let tcp = tokio_proto::TcpServer::new(tls, addr);
-    println!("Starting to serve on https://{}.", addr);
-    tcp.serve(move || Ok(router));
+    let mut config = rustls::ServerConfig::new();
+    config.set_single_cert(certs, certs_key);
+    let arc_config = std::sync::Arc::new(config);
+    let mut core = Core::new().unwrap();
+    let handle = core.handle();
+    let socket = TcpListener::bind(&addr, &handle).unwrap();
+    let http = std::rc::Rc::new(Http::new());
+    let done = socket.incoming()
+        .for_each(|(sock, remote_addr)| {
+            println!("Info: {:?}", remote_addr);
+            let h = handle.clone();
+            let http = http.clone();
+            let done = arc_config.accept_async(sock)
+                .map(move |stream| {
+                    let r = Router::new(h.clone(), &COOKIE_KEY, &DOMAIN, &CAS_CLIENT);
+                    http.bind_connection(&h, stream, remote_addr, r);
+                })
+                .map_err(move |err| println!("Error: {:?} - {}", err, remote_addr));
+            handle.spawn(done);
+            Ok(())
+        });
+    println!("Starting to serve on https://{} ...", addr);
+    core.run(done).unwrap();
 }

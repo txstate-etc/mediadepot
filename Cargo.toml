@@ -8,7 +8,7 @@ futures = "^0.1.16"
 rustls = "^0.11"
 hyper = "^0.11"
 tokio-core = "^0.1"
-tokio-rustls = { version = "^0.4.0", features = ["tokio-proto"] }
+tokio-rustls = "^0.4.0"
 tokio-proto = "^0.1.1"
 # Use rustls for front end to stick with rust protected ssl
 hyper-rustls = "0.11.0"
@@ -16,9 +16,8 @@ hyper-rustls = "0.11.0"
 hyper-openssl = "0.3.0"
 url = "^0.2"
 xml-rs = "^0.7"
-#cookie = { version = "^0.10.1", features = ["percent-encode", "secure"] }
-# keep following in sync with rustls
-ring  = "0.12.1"
 percent-encoding = "1.0.0"
 base64 = "0.6.0"
 lazy_static = "0.2.9"
+# keep the following in sync with rustls
+ring  = "0.12.1"

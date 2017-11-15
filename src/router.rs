@@ -2,7 +2,7 @@ use futures::future;
 use hyper::header::{ContentLength, ContentType};
 use hyper::mime;
 use hyper::server::{Service, Request, Response};
-use hyper::{Get, Post, StatusCode};
+use hyper::{Head, Get, Post, StatusCode};
 use hyper;
 use key::Key;
 use cas::CasClient;
@@ -10,17 +10,51 @@ use hyper::Uri;
 use percent_encoding::{percent_decode, utf8_percent_encode, DEFAULT_ENCODE_SET};
 use cookie;
 use cas;
+use tokio_core::reactor::Handle;
 
-#[derive(Clone, Copy)]
+// Handlers
+
+////https://stackoverflow.com/questions/41179659/convert-vecstring-into-a-slice-of-str-in-rust
+//fn handler<T: AsRef<str>>(id: &str, path: &[T]) -> Response {
+//    let res = if path[0][..].as_ref() == "files" {
+//        UIFile(id, path[1..])
+//    } else {
+//        UIClient(id)
+//    }
+//    if let Some(res) = res {
+//        res
+//    } else {
+//        Response::new().with_status(StatusCode::NotFound)
+//    }
+//}
+
+//fn UIFile<T: AsRef<str>>(id: &str, path: &[T]) -> Option<Response> {
+//    if path.len() == 1 {
+
+//        Response::new()
+//            .with_body()
+//    } else {
+//        None
+//    }
+//}
+
+//fn UIClient(id: &str) -> Option<Response> {
+//}
+
+// Router
+
+#[derive(Clone)]
 pub struct Router<'a> {
+    handle: Handle,
     key: &'a Key,
     domain: &'a Uri,
     cas: &'a CasClient,
+    //file: Static,
 }
 
 impl<'a> Router<'a> {
-    pub fn new(cookie_key: &'a Key, domain: &'a Uri, cas_client: &'a CasClient) -> Router<'a> {
-        Router{key: cookie_key, domain: domain, cas: cas_client}
+    pub fn new(handle: Handle, cookie_key: &'a Key, domain: &'a Uri, cas_client: &'a CasClient) -> Router<'a> {
+        Router{handle: handle, key: cookie_key, domain: domain, cas: cas_client}
     }
 
     fn service_url(&self, paths: &Vec<String>) -> String {
@@ -34,7 +68,7 @@ impl<'a> Router<'a> {
     }
 }
 
-impl<'a> Service for Router<'a> {
+impl<'a> Service for Router<'a,> {
     type Request = Request;
     type Response = Response;
     type Error = hyper::Error;
@@ -89,11 +123,13 @@ impl<'a> Service for Router<'a> {
                     }
                     // CAS infrastructure
                     // Route/Path were single page application will be accessed.
-                    (&Get, "/") | (&Get, "files") => {
+                    (&Get, "/") | (&Get, "files") | (&Head, "files") => {
                         if let Some(c) = cookie::Cookie::from_request(&req, Some(cookie::CookiePrefix::HOST), "id") {
                             // Session cookie found (get ID)
                             if let Ok(id) = c.get_value(Some(self.key)) {
                                 // Valid session cookie so manage request
+                                // TODO: Content-Disposition header should be set for downloading videos
+                                // TODO: UI/File handler
                                 let body = "<!DOCTYPE html><html><head><meta charset=\"utf-8\" /><title>get cookie</title></head><body>id = ".to_string() + &id[..] + "</body>";
                                 Response::new()
                                     .with_status(StatusCode::InternalServerError)
@@ -121,13 +157,14 @@ impl<'a> Service for Router<'a> {
                                         .with_body(body)
                                 }
                             }
-                            // TODO: Content-Disposition header should be set for downloading videos
                         } else { 
                             // Session cookie was not found
                             match self.cas.verify_from_request(req.uri().query(), &self.service_url(&paths)[..]) {
                                 // If this was a redirect from CAS with token then verify and setup session cookie.
                                 Ok(cas::ServiceResponse::Success(id)) => {
                                     if let Ok(c) = cookie::Cookie::new(Some(cookie::CookiePrefix::HOST), "id", &id[..], Some(self.key)) {
+                                        // TODO: Content-Disposition header should be set for downloading videos
+                                        // TODO: UI/File handler along with cookie set (NOTE: design handler to return response were we may add cookie)
                                         let body = "<!DOCTYPE html><html><head><meta charset=\"utf-8\" /><title>set session</title></head><body>set id cookie.</body>";
                                         Response::new()
                                             .with_header(ContentLength(body.len() as u64))
