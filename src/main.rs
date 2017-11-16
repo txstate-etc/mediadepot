@@ -74,6 +74,16 @@ lazy_static! {
     };
 }
 
+// example: ROOTDIR=/var/lib/www
+lazy_static! {
+    static ref ROOT_DIR: String = {
+        match env::var("ROOTDIR") {
+            Ok(root_dir) => root_dir,
+            Err(_) => "/var/lib/www".to_string(),
+        }
+    };
+}
+
 fn main() {
     let address = match std::env::var("ADDRESS") {
         Ok(a) => a.to_owned(),
@@ -96,7 +106,7 @@ fn main() {
             let http = http.clone();
             let done = arc_config.accept_async(sock)
                 .map(move |stream| {
-                    let r = Router::new(h.clone(), &COOKIE_KEY, &DOMAIN, &CAS_CLIENT);
+                    let r = Router::new(h.clone(), &*ROOT_DIR, &COOKIE_KEY, &DOMAIN, &CAS_CLIENT);
                     http.bind_connection(&h, stream, remote_addr, r);
                 })
                 .map_err(move |err| println!("Error: {:?} - {}", err, remote_addr));

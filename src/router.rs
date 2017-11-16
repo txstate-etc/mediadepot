@@ -1,16 +1,57 @@
 use futures::future;
+use tokio_core::reactor::Handle;
 use hyper::header::{ContentLength, ContentType};
-use hyper::mime;
 use hyper::server::{Service, Request, Response};
-use hyper::{Head, Get, Post, StatusCode};
+use hyper::{Head, Get, Post, StatusCode, Uri, mime};
 use hyper;
 use key::Key;
 use cas::CasClient;
-use hyper::Uri;
 use percent_encoding::{percent_decode, utf8_percent_encode, DEFAULT_ENCODE_SET};
 use cookie;
 use cas;
-use tokio_core::reactor::Handle;
+//use static_file::StaticFile;
+
+// Basic utilities
+
+// Make sure to leave out directory structures such as:
+//   "/", "..", and hidden paths that start with '.' character.
+// May also want not include bash commands such as:
+//    <, >, ;, *, [, ], (, ), #, !, {, }, ...
+#[inline(always)]
+fn not_whitelist_char(c: char) -> bool {
+    !(c.is_alphanumeric() || c == '_' || c == '-' || c == '.')
+}
+
+/// Whitelist allowed characters, remove .. within
+/// percent decoded path segments. The result will always
+/// be either an Err or a Ok type with a vector of at least
+/// one entry.
+fn normalize_path(path: &str) -> Result<Vec<String>, &'static str> {
+    path.split('/').fold(Ok(Vec::new()), |result, p| {
+        match result {
+            Ok(mut r) => {
+                if let Ok(decoded) = percent_decode(p.as_bytes()).decode_utf8() {
+                    if decoded == "..".to_string() {
+                        r.pop();
+                        Ok(r)
+                    } else if decoded.starts_with('.') {
+                        Err("Path contains hidden directory")
+                    } else if decoded.contains(not_whitelist_char) {
+                        Err("Path contains a non-whitelisted character")
+                    } else if decoded == "".to_string() {
+                        Ok(r)
+                    } else {
+                        r.push(decoded.to_string());
+                        Ok(r)
+                    }
+                } else {
+                    Err("Invalide percent decoded utf8 value in path")
+                }
+            },
+            Err(_) => result,
+        }
+    })
+}
 
 // Handlers
 
@@ -46,21 +87,21 @@ use tokio_core::reactor::Handle;
 #[derive(Clone)]
 pub struct Router<'a> {
     handle: Handle,
+    dir: &'a str,
     key: &'a Key,
     domain: &'a Uri,
     cas: &'a CasClient,
-    //file: Static,
 }
 
 impl<'a> Router<'a> {
-    pub fn new(handle: Handle, cookie_key: &'a Key, domain: &'a Uri, cas_client: &'a CasClient) -> Router<'a> {
-        Router{handle: handle, key: cookie_key, domain: domain, cas: cas_client}
+    pub fn new(handle: Handle, dir: &'a str, cookie_key: &'a Key, domain: &'a Uri, cas_client: &'a CasClient) -> Router<'a> {
+        Router{handle: handle, dir: dir, key: cookie_key, domain: domain, cas: cas_client}
     }
 
-    fn service_url(&self, paths: &Vec<String>) -> String {
-        let mut path = paths.join("/");
+    fn service_url(&self, path: &Vec<String>) -> String {
+        let mut path = path.join("/");
         if !path.starts_with("/") {
-            path = "/".to_string() + &path[..]
+            path = "/".to_string() + &path[..];
         }
         utf8_percent_encode(&(self.domain.to_string()+ &path[..])[..],
             DEFAULT_ENCODE_SET
@@ -76,11 +117,16 @@ impl<'a> Service for Router<'a,> {
 
     fn call(&self, req: Request) -> Self::Future {
         print!("[REQUEST] {:?}\n", req);
-        if let Ok(paths) = paths(req.path()) {
+        if let Ok(path) = normalize_path(req.path()) {
             //https://tokio-rs.github.io/tokio-middleware/src/tokio_middleware/log.rs.html
+            //https://doc.rust-lang.org/log/env_logger/
             //  print!("[REQUEST] {:?}\n", req); // NOTE req.remote_addr() was None when using 127.0.0.1 host address.
+            let mut parent = "";
+            if path.len() > 0 {
+                parent = &path[0][..];
+            }
             future::ok(
-                match (req.method(), &(paths[0])[..]) {
+                match (req.method(), parent) {
                     // Health checks. TODO: Verify key files may be accessible
                     (&Get, "health") => {
                         let body: &'static [u8] = b"Up";
@@ -90,7 +136,7 @@ impl<'a> Service for Router<'a,> {
                             .with_body(body)
                     }
                     // CSS and image resource files
-                    (&Get, "static") => {
+                    (&Get, "resources") => {
                         let body = "<!DOCTYPE html><html><head><meta charset=\"utf-8\" /><title>files</title></head><body>This will be replaced with resource file headers and content</body>";
                         Response::new()
                             .with_header(ContentLength(body.len() as u64))
@@ -123,7 +169,7 @@ impl<'a> Service for Router<'a,> {
                     }
                     // CAS infrastructure
                     // Route/Path were single page application will be accessed.
-                    (&Get, "/") | (&Get, "files") | (&Head, "files") => {
+                    (&Get, "") | (&Get, "files") | (&Head, "files") => {
                         if let Some(c) = cookie::Cookie::from_request(&req, Some(cookie::CookiePrefix::HOST), "id") {
                             // Session cookie found (get ID)
                             if let Ok(id) = c.get_value(Some(self.key)) {
@@ -138,7 +184,7 @@ impl<'a> Service for Router<'a,> {
                             // Invalid session cookie; so clear out session cookie and redirect CAS login
                             } else {
                                 if let Ok(c) = cookie::Cookie::new(Some(cookie::CookiePrefix::HOST), "id", "", Some(self.key)) {
-                                    self.cas.login_redirect(&self.service_url(&paths)[..])
+                                    self.cas.login_redirect(&self.service_url(&path)[..])
                                         .with_header(
                                             hyper::header::SetCookie(vec![
                                                 c.with_path(Some("/"))
@@ -159,7 +205,7 @@ impl<'a> Service for Router<'a,> {
                             }
                         } else { 
                             // Session cookie was not found
-                            match self.cas.verify_from_request(req.uri().query(), &self.service_url(&paths)[..]) {
+                            match self.cas.verify_from_request(req.uri().query(), &self.service_url(&path)[..]) {
                                 // If this was a redirect from CAS with token then verify and setup session cookie.
                                 Ok(cas::ServiceResponse::Success(id)) => {
                                     if let Ok(c) = cookie::Cookie::new(Some(cookie::CookiePrefix::HOST), "id", &id[..], Some(self.key)) {
@@ -189,11 +235,11 @@ impl<'a> Service for Router<'a,> {
                                 // If not a redirect from CAS, or Ticket error, then redirect to CAS (Make sure not to run into infinite loop)
                                 Ok(cas::ServiceResponse::Failure(e)) => {
                                     print!("[CAS VERIFY RESPONSE] {:?}\n", e);
-                                    self.cas.login_redirect(&self.service_url(&paths)[..])
+                                    self.cas.login_redirect(&self.service_url(&path)[..])
                                 }
                                 Err(e) => {
                                     print!("[CAS VERIFY RESPONSE] {:?}\n", e);
-                                    self.cas.login_redirect(&self.service_url(&paths)[..])
+                                    self.cas.login_redirect(&self.service_url(&path)[..])
                                 }
                             }
                         }
@@ -210,45 +256,4 @@ impl<'a> Service for Router<'a,> {
             future::ok(Response::new().with_status(StatusCode::NotFound))
         }
     }
-}
-
-// Make sure to leave out directory structures such as:
-//   "/", "..", and hidden paths that start with '.' character.
-// May also want not include bash commands such as:
-//    <, >, ;, *, [, ], (, ), #, !, {, }, ...
-#[inline(always)]
-fn not_whitelist_char(c: char) -> bool {
-    !(c.is_alphanumeric() || c == '_' || c == '-' || c == '.')
-}
-
-/// Whitelist allowed characters, remove .. within
-/// percent decoded path segments. The result will always
-/// be either an Err or a Ok type with a vector of at least
-/// one entry.
-fn paths(path: &str) -> Result<Vec<String>, &'static str> {
-    let mut paths = Vec::new();
-    let segments = path.split("/");
-    for segment in segments {
-        let decoded = percent_decode(segment.as_bytes())
-            .decode_utf8()
-            .map_err(|_| "Invalid percent decoded value in path.")?;
-        if decoded == ".." {
-            paths.pop();
-        } else if decoded == "" {
-            continue;
-        } else if decoded.starts_with('.') {
-            return Err("Path contains hidden directory.")
-        } else if decoded.contains(not_whitelist_char) {
-            return Err("Path contains a non-whitelisted character.")
-        } else {
-            paths.push(decoded.into_owned());
-        }
-    }
-    // NOTE: hyper request path will at the very least should send back
-    // a "/" if the path submitted was empty, however we could get a
-    // "/.." path which would generate an empty vector which must be fixed
-    if paths.len() == 0 {
-      paths.push("/".to_string());
-    }
-    Ok(paths)
 }
