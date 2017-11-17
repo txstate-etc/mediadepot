@@ -15,6 +15,7 @@ extern crate xml;
 mod key;
 mod cookie;
 mod cas;
+mod files;
 mod router;
 
 use futures::{Future, Stream};
