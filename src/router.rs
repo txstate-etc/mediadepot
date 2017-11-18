@@ -109,26 +109,30 @@ impl<'a> Service for Router<'a> {
     type Future = RouterFuture;
 
     fn call(&self, req: Request) -> Self::Future {
+        //https://tokio-rs.github.io/tokio-middleware/src/tokio_middleware/log.rs.html
+        //https://doc.rust-lang.org/log/env_logger/
         print!("[REQUEST] {:?}\n", req);
         if let Ok(path) = normalize_req_path(req.path()) {
-            //https://tokio-rs.github.io/tokio-middleware/src/tokio_middleware/log.rs.html
-            //https://doc.rust-lang.org/log/env_logger/
-            //  print!("[REQUEST] {:?}\n", req); // NOTE req.remote_addr() was None when using 127.0.0.1 host address.
             let mut parent = "";
             if path.len() > 0 {
                 parent = &path[0][..];
             }
             match (req.method(), parent) {
-                // Health checks. TODO: Verify key files may be accessible
-                (&Get, "health") => {
+                // Health checks.
+                //   TODO: Verify vcms directory with faculty and student video files may be accessible
+                //   TODO: Return back total number of files served and currently serving.
+                (&Get, "health") | (&Head, "health") => {
                     let body: &'static [u8] = b"Up";
-                    future::ok(Response::new()
+                    let mut res = Response::new()
                         .with_header(ContentType(mime::TEXT_PLAIN))
-                        .with_header(ContentLength(body.len() as u64))
-                        .with_body(body))
+                        .with_header(ContentLength(body.len() as u64));
+                    if req.method() == &Get { 
+                        res.set_body(body);
+                    }
+                    future::ok(res)
                 }
                 // CSS and image resource files
-                (&Get, "resources") => {
+                (&Get, "resources") | (&Head, "resources") => {
                     self.manage_file(req, Response::new(), &path)
                 }
                 // Allow to logout without checking if logged in; so if a valid CAS user (authentication)
@@ -163,8 +167,9 @@ impl<'a> Service for Router<'a> {
                         if let Ok(id) = c.get_value(Some(self.key)) {
                             // Content-Disposition header should be set for downloading videos
                             if parent == "library" {
-                                let mut path_files = vec![ "vcms".to_string(), id ];
-                                path_files.append(path);
+                                let mut path_files = path.clone();
+                                path_files.insert(0, id);
+                                path_files.insert(0, "vcms".to_string());
                                 self.manage_file(req, Response::new(), &path_files)
                             } else {
                                 // UI/File handler
@@ -206,8 +211,9 @@ impl<'a> Service for Router<'a> {
                                 if let Ok(c) = cookie::Cookie::new(Some(cookie::CookiePrefix::HOST), "id", &id[..], Some(self.key)) {
                                     // Content-Disposition header should be set for downloading videos
                                     if parent == "library" {
-                                        let mut path_files = vec![ "vcms".to_string(), id ];
-                                        path_files.append(path);
+                                        let mut path_files = path.clone();
+                                        path_files.insert(0, id);
+                                        path_files.insert(0, "vcms".to_string());
                                         self.manage_file(req,
                                              Response::new()
                                             .with_header(
