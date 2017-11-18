@@ -27,3 +27,4 @@ A hyper based server with CAS authentication that allows the user to download th
 ## TODOs:
 * Setup with docker (17.05+) multi-staged builds.
 * Design templates to fill in with user content.
+* Add Content-Disposition header force browsers to download the video content rather then play them.
