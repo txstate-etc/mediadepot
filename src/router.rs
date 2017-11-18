@@ -2,7 +2,7 @@ use futures::future;
 use tokio_core::reactor::Handle;
 use hyper::header::{ContentLength, ContentType};
 use hyper::server::{Service, Request, Response};
-use hyper::{Method, Head, Get, Post, StatusCode, Uri, mime, header};
+use hyper::{Method, Head, Get, Post, Delete, StatusCode, Uri, mime, header};
 use hyper;
 use key::Key;
 use percent_encoding::{percent_decode, utf8_percent_encode, DEFAULT_ENCODE_SET};
@@ -53,33 +53,7 @@ fn normalize_req_path(path: &str) -> Result<Vec<String>, &'static str> {
 }
 
 // Handlers
-
 ////https://stackoverflow.com/questions/41179659/convert-vecstring-into-a-slice-of-str-in-rust
-//fn handler<T: AsRef<str>>(id: &str, path: &[T]) -> Response {
-//    let res = if path[0][..].as_ref() == "files" {
-//        UIFile(id, path[1..])
-//    } else {
-//        UIClient(id)
-//    }
-//    if let Some(res) = res {
-//        res
-//    } else {
-//        Response::new().with_status(StatusCode::NotFound)
-//    }
-//}
-
-//fn UIFile<T: AsRef<str>>(id: &str, path: &[T]) -> Option<Response> {
-//    if path.len() == 1 {
-
-//        Response::new()
-//            .with_body()
-//    } else {
-//        None
-//    }
-//}
-
-//fn UIClient(id: &str) -> Option<Response> {
-//}
 
 // Router
 
@@ -126,6 +100,7 @@ impl<'a> Router<'a> {
         }
     }
 }
+
 
 impl<'a> Service for Router<'a> {
     type Request = Request;
@@ -181,18 +156,25 @@ impl<'a> Service for Router<'a> {
                 }
                 // CAS infrastructure
                 // Route/Path were single page application will be accessed.
-                (&Get, "") | (&Get, "files") | (&Head, "files") => {
+                (&Get, "") | (&Get, "files") | (&Head, "files") | (&Delete, "files") => {
                     if let Some(c) = cookie::Cookie::from_request(&req, Some(cookie::CookiePrefix::HOST), "id") {
                         // Session cookie found (get ID)
+                        // Valid session cookie so manage request
                         if let Ok(id) = c.get_value(Some(self.key)) {
-                            // Valid session cookie so manage request
-                            // TODO: Content-Disposition header should be set for downloading videos
-                            // TODO: UI/File handler
-                            let body = "<!DOCTYPE html><html><head><meta charset=\"utf-8\" /><title>get cookie</title></head><body>id = ".to_string() + &id[..] + "</body>";
-                            future::ok(Response::new()
-                                .with_status(StatusCode::InternalServerError)
-                                .with_header(ContentLength(body.len() as u64))
-                                .with_body(body))
+                            // Content-Disposition header should be set for downloading videos
+                            if parent == "files" {
+                                let mut path_files = path.clone();
+                                path_files.insert(1, "library".to_string());
+                                path_files.insert(1, id);
+                                self.manage_file(req, Response::new(), &path_files)
+                            } else {
+                                // UI/File handler
+                                let body = "<!DOCTYPE html><html><head><meta charset=\"utf-8\" /><title>get cookie</title></head><body>id = ".to_string() + &id[..] + "</body>";
+                                future::ok(Response::new()
+                                    .with_status(StatusCode::InternalServerError)
+                                    .with_header(ContentLength(body.len() as u64))
+                                    .with_body(body))
+                            }
                         // Invalid session cookie; so clear out session cookie and redirect CAS login
                         } else {
                             if let Ok(c) = cookie::Cookie::new(Some(cookie::CookiePrefix::HOST), "id", "", Some(self.key)) {
@@ -207,6 +189,7 @@ impl<'a> Service for Router<'a> {
                                                 .get_full_value()
                                         ])
                                     ))
+                            // ERROR: Unable to create clear cookie
                             } else {
                                 let body = "<!DOCTYPE html><html><head><meta charset=\"utf-8\" /><title>500 login retry - clear session error</title></head><body>Unable to clear session in attempt to retry login.</body>";
                                 future::ok(Response::new()
@@ -215,27 +198,47 @@ impl<'a> Service for Router<'a> {
                                     .with_body(body))
                             }
                         }
-                    } else { 
+                    } else {
                         // Session cookie was not found
                         match self.cas.verify_from_request(req.uri().query(), &self.service_url(&path)[..]) {
                             // If this was a redirect from CAS with token then verify and setup session cookie.
                             Ok(cas::ServiceResponse::Success(id)) => {
+                                // Add session cookie
                                 if let Ok(c) = cookie::Cookie::new(Some(cookie::CookiePrefix::HOST), "id", &id[..], Some(self.key)) {
-                                    // TODO: Content-Disposition header should be set for downloading videos
-                                    // TODO: UI/File handler along with cookie set (NOTE: design handler to return response were we may add cookie)
-                                    let body = "<!DOCTYPE html><html><head><meta charset=\"utf-8\" /><title>set session</title></head><body>set id cookie.</body>";
-                                    future::ok(Response::new()
-                                        .with_header(ContentLength(body.len() as u64))
-                                        .with_header(
-                                            hyper::header::SetCookie(vec![
-                                                c.with_path(Some("/"))
-                                                    .with_secure(true)
-                                                    .with_http_only(true)
-                                                    .with_same_site(Some(cookie::SameSite::LAX))
-                                                    .get_full_value()
-                                            ])
-                                        )
-                                        .with_body(body))
+                                    // Content-Disposition header should be set for downloading videos
+                                    if parent == "files" {
+                                        let mut path_files = path.clone();
+                                        path_files.insert(1, "library".to_string());
+                                        path_files.insert(1, id);
+                                        self.manage_file(req,
+                                             Response::new()
+                                            .with_header(
+                                                hyper::header::SetCookie(vec![
+                                                    c.with_path(Some("/"))
+                                                        .with_secure(true)
+                                                        .with_http_only(true)
+                                                        .with_same_site(Some(cookie::SameSite::LAX))
+                                                        .get_full_value()
+                                                ])
+                                            ),
+                                            &path_files)
+                                    // UI/File handler
+                                    } else {
+                                        let body = "<!DOCTYPE html><html><head><meta charset=\"utf-8\" /><title>set session</title></head><body>set id cookie.</body>";
+                                        future::ok(Response::new()
+                                            .with_header(ContentLength(body.len() as u64))
+                                            .with_header(
+                                                hyper::header::SetCookie(vec![
+                                                    c.with_path(Some("/"))
+                                                        .with_secure(true)
+                                                        .with_http_only(true)
+                                                        .with_same_site(Some(cookie::SameSite::LAX))
+                                                        .get_full_value()
+                                                ])
+                                            )
+                                            .with_body(body))
+                                    }
+                                // ERROR: unable to set session
                                 } else {
                                     let body = "<!DOCTYPE html><html><head><meta charset=\"utf-8\" /><title>500 login - set session error</title></head><body>Unable to set session.</body>";
                                     future::ok(Response::new()
