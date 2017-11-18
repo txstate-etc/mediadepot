@@ -21,5 +21,9 @@ A hyper based server with CAS authentication that allows the user to download th
 
 ## ROOTDIR subdirectories:
 * `/resources` This is where the images, css, and other files that support the user interface reside.
-* `/private` This is where the SSL certificates reside. Note that the application expects to use SSL and will not start without them.
-* `/vcms` This is where all the created video content will reside. The filesystem is broken up under user id's where their content will be placed under a library directory. Each video file will reside within it's own directory under the library directory, which will contain not only the video itself, but also a json file describing the video, and a thumbnails directory with small images of different spots within the video.
+* `/private` This is where the SSL certificates are stored. Note that the application expects to use SSL and will not start without them.
+* `/vcms` This is where all the created video content will be placed. The filesystem is broken up into user id's where their content will be placed under a library directory. Each video file will reside within it's own directory under the library directory, which will contain not only the video itself, but also a json file describing the video and a thumbnails directory containing images of different spots within the video.
+
+## TODOs:
+* Setup with docker (17.05+) multi-staged builds.
+* Design templates to fill in with user content.
