@@ -156,16 +156,15 @@ impl<'a> Service for Router<'a> {
                 }
                 // CAS infrastructure
                 // Route/Path were single page application will be accessed.
-                (&Get, "") | (&Get, "files") | (&Head, "files") | (&Delete, "files") => {
+                (&Get, "") | (&Get, "library") | (&Head, "library") | (&Delete, "library") => {
                     if let Some(c) = cookie::Cookie::from_request(&req, Some(cookie::CookiePrefix::HOST), "id") {
                         // Session cookie found (get ID)
                         // Valid session cookie so manage request
                         if let Ok(id) = c.get_value(Some(self.key)) {
                             // Content-Disposition header should be set for downloading videos
-                            if parent == "files" {
-                                let mut path_files = path.clone();
-                                path_files.insert(1, "library".to_string());
-                                path_files.insert(1, id);
+                            if parent == "library" {
+                                let mut path_files = vec![ "vcms".to_string(), id ];
+                                path_files.append(path);
                                 self.manage_file(req, Response::new(), &path_files)
                             } else {
                                 // UI/File handler
@@ -206,10 +205,9 @@ impl<'a> Service for Router<'a> {
                                 // Add session cookie
                                 if let Ok(c) = cookie::Cookie::new(Some(cookie::CookiePrefix::HOST), "id", &id[..], Some(self.key)) {
                                     // Content-Disposition header should be set for downloading videos
-                                    if parent == "files" {
-                                        let mut path_files = path.clone();
-                                        path_files.insert(1, "library".to_string());
-                                        path_files.insert(1, id);
+                                    if parent == "library" {
+                                        let mut path_files = vec![ "vcms".to_string(), id ];
+                                        path_files.append(path);
                                         self.manage_file(req,
                                              Response::new()
                                             .with_header(
