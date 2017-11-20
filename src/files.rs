@@ -7,6 +7,8 @@ use hyper;
 use hyper::{Chunk, StatusCode, Body, header};
 use hyper::server::Response;
 use tokio_core::reactor::Handle;
+use mime;
+use mime_guess;
 
 /// A stream that produces Hyper chunks from a file.
 struct FileChunkStream(File);
@@ -28,6 +30,25 @@ impl Stream for FileChunkStream {
             Err(err) => Ok(Async::Ready(Some(Err(hyper::Error::Io(err))))),
         }
     }
+}
+
+//fn get_filename_ext(path: &str) -> Option<filename, ext> {
+fn get_filename_ext(path: &str) -> Option<(&str, &str)> {
+    let mut filename = &path[..];
+    while let Some(index) = filename.find('/') {
+        if index + 1 >= filename.len() {
+            return None;
+        }
+        filename = &filename[(index + 1)..];
+    }
+    let mut ext = &filename[..];
+    while let Some(index) = ext.find('.') {
+        if index + 1 >= ext.len() {
+            return None;
+        }
+        ext = &ext[(index + 1)..];
+    }
+    return Some((filename, ext));
 }
 
 /// Serving up a static file as Hyper Chunks.
@@ -80,6 +101,19 @@ pub fn serve(handle: Handle, method_head: bool, modified_req: Option<&header::Ht
     // Build response headers.
     let mut res = res.with_header(header::ContentLength(metadata.len()))
         .with_header(header::LastModified(modified_http));
+    if let Some((filename, ext)) = get_filename_ext(path) {
+        let file_mime = mime_guess::get_mime_type_str(ext).unwrap_or("octet-stream");
+        if let Ok(mime_parsed) = file_mime.parse::<mime::Mime>() {
+            res = res.with_header(header::ContentType(mime_parsed));
+        }
+        // if main mime type is of video (mime starts with "video/" in str) then add disposition header to force download.
+        if file_mime.starts_with("video/") {
+            res = res.with_header(header::ContentDisposition {
+                disposition: header::DispositionType::Attachment,
+                parameters: vec![header::DispositionParam::Filename(header::Charset::Ext("UTF-8".to_string()), None, filename.as_bytes().to_vec())]
+            });
+        }
+    }
     if let Ok(delta_modified) = modified.duration_since(time::UNIX_EPOCH) {
         let size = metadata.len();
         let etag = format!("{0:x}-{1:x}.{2:x}", size, delta_modified.as_secs(), delta_modified.subsec_nanos());

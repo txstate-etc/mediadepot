@@ -34,4 +34,3 @@ docker run --rm --env-file ~+/www/env.txt --read-only -v ~+/www:/var/lib/www:ro 
 
 ## TODOs:
 * Design templates to fill in with user content.
-* Add Content-Disposition header force browsers to download the video content rather then play them.

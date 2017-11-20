@@ -10,6 +10,8 @@ extern crate ring;
 extern crate base64;
 extern crate percent_encoding;
 extern crate xml;
+extern crate mime;
+extern crate mime_guess;
 #[macro_use] extern crate lazy_static;
 
 mod key;
