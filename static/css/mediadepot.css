@@ -1,0 +1,100 @@
+body {
+    display: flex;
+    min-height: 100vh;
+    flex-direction: column;
+}
+.main-content {
+    flex: 1;
+}
+.youstar-logo {
+    max-height: 5rem;
+}
+.btn-logout {
+background-color: #20bcfb;
+border-color: #1889b7;
+color: black;
+}
+.btn-logout:hover {
+background-color: #1889b7;
+border-color: #126789;
+}
+.carded-label {
+    display: none;
+}
+.thumbnail-container {
+    width: 100%;
+}
+.md-thumbnail {
+    max-width: 150px;
+    height: auto;
+}
+.action-links {
+    display: none;
+}
+.action-links a {
+    color: #115F7E;
+}
+.btn.video-actions {
+    background-color: transparent;
+}
+.btn.video-actions:hover{
+    border: 1px solid #d0d0d0;
+}
+footer {
+    background-color: #194164;
+    color: #fff;
+    text-align: center;
+    padding: 1rem;
+}
+.footer-link {
+    color: #fff;
+}
+.footer-link:hover {
+    color: #fff;
+    text-decoration: underline;
+}
+@media (max-width: 800px) {
+    .youstar-logo {
+        max-height: 4rem;
+    }
+    thead {
+        display: none;
+    }
+    tr {
+      margin-bottom: 0px !important;
+      margin-top: 1.5rem;
+      display: block;
+      border-bottom: 2px solid black;
+    }
+    .table td {
+        border-top: 0px;
+    }
+    td {
+      display: block;
+      text-align: right;
+      
+      border-bottom: 1px dotted black;
+    }
+    td:last-child{
+      border-bottom: 0;
+    }
+    .thumbnail-container {
+        text-align: center;
+    }
+    .md-thumbnail {
+        max-width: 100%;
+    }
+    .carded-label {
+        display: block;
+        font-weight: bold;
+        float: left;
+    }
+    .dropdown {
+        display: none;
+    }
+    .action-links {
+        display: flex;
+        justify-content: space-between;
+        font-size: 80%;
+    }
+}
