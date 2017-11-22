@@ -165,7 +165,6 @@ impl<'a> Service for Router<'a> {
                         // Session cookie found (get ID)
                         // Valid session cookie so manage request
                         if let Ok(id) = c.get_value(Some(self.key)) {
-                            // Content-Disposition header should be set for downloading videos
                             if parent == "library" {
                                 let mut path_files = path.clone();
                                 path_files.insert(0, id);
@@ -175,7 +174,6 @@ impl<'a> Service for Router<'a> {
                                 // UI/File handler
                                 let body = "<!DOCTYPE html><html><head><meta charset=\"utf-8\" /><title>get cookie</title></head><body>id = ".to_string() + &id[..] + "</body>";
                                 future::ok(Response::new()
-                                    .with_status(StatusCode::InternalServerError)
                                     .with_header(ContentLength(body.len() as u64))
                                     .with_body(body))
                             }
@@ -209,7 +207,6 @@ impl<'a> Service for Router<'a> {
                             Ok(cas::ServiceResponse::Success(id)) => {
                                 // Add session cookie
                                 if let Ok(c) = cookie::Cookie::new(Some(cookie::CookiePrefix::HOST), "id", &id[..], Some(self.key)) {
-                                    // Content-Disposition header should be set for downloading videos
                                     if parent == "library" {
                                         let mut path_files = path.clone();
                                         path_files.insert(0, id);

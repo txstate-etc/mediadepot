@@ -106,6 +106,7 @@ pub fn serve(handle: Handle, method_head: bool, modified_req: Option<&header::Ht
         if let Ok(mime_parsed) = file_mime.parse::<mime::Mime>() {
             res = res.with_header(header::ContentType(mime_parsed));
         }
+        // Content-Disposition header should be set for downloading videos
         // if main mime type is of video (mime starts with "video/" in str) then add disposition header to force download.
         if file_mime.starts_with("video/") {
             res = res.with_header(header::ContentDisposition {
