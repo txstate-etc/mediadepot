@@ -1,3 +1,5 @@
+#[macro_use] extern crate serde_derive;
+#[macro_use] extern crate lazy_static;
 extern crate futures;
 extern crate hyper;
 extern crate rustls;
@@ -12,7 +14,8 @@ extern crate percent_encoding;
 extern crate xml;
 extern crate mime;
 extern crate mime_guess;
-#[macro_use] extern crate lazy_static;
+extern crate serde;
+extern crate serde_json;
 
 mod key;
 mod cookie;

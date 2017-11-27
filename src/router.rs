@@ -6,11 +6,20 @@ use hyper::{Method, Head, Get, Post, Delete, StatusCode, Uri, mime, header};
 use hyper;
 use key::Key;
 use percent_encoding::{percent_decode, utf8_percent_encode, DEFAULT_ENCODE_SET};
+use std::fs;
+use serde_json;
 use cookie;
 use cas;
 use files;
 
+
 // Basic utilities
+
+#[derive(Serialize, Debug)]
+enum MediaStore {
+    File(String),
+    Dir { name: String, entries: Vec<MediaStore> },
+}
 
 // Make sure to leave out directory structures such as:
 //   "/", "..", and hidden paths that start with '.' character.
@@ -68,6 +77,36 @@ pub struct Router<'a> {
     cas: &'a cas::CasClient,
 }
 
+fn get_paths(root: &str, name: &str) -> Result<MediaStore, &'static str>  {
+    let path = root.to_string() + "/" + name;
+    let metadata = fs::metadata(&*path).map_err(|_| "Unable to stat file or directory")?;
+    if metadata.is_file() {
+        Ok(MediaStore::File(name.to_string()))
+    } else if metadata.is_dir() {
+        match fs::read_dir(&*path) {
+            Err(e) => Err("Unable to access directory"),
+            Ok(files) => {
+                let mut entries: Vec<MediaStore> = Vec::new();
+                for file in files {
+                    if let Ok(file) = file {
+                        if let Ok(filename) = file.file_name().into_string() {
+                            // Skip hidden files and directories
+                            if !filename.starts_with(".") {
+                                if let Ok(entry) = get_paths(&path[..], &filename[..]) {
+                                    entries.push(entry);
+                                }
+                            }
+                        }
+                    }
+                }
+                Ok(MediaStore::Dir{name: name.to_string(), entries: entries})
+            },
+        }
+    } else {
+        Err("Unsupported entry type.")
+    }
+}
+
 impl<'a> Router<'a> {
     pub fn new(handle: Handle, dir_www: &'a str, cookie_key: &'a Key, domain: &'a Uri, cas_client: &'a cas::CasClient) -> Router<'a> {
         Router{handle: handle, dir_www: dir_www, key: cookie_key, domain: domain, cas: cas_client}
@@ -84,7 +123,6 @@ impl<'a> Router<'a> {
     }
 
     // If path is to student directory insert id in path vector
-    // If path is to 
     fn manage_file(&self, req: Request, res: Response, path: &Vec<String>) -> RouterFuture {
         let path = self.dir_www.to_string() + "/" + &*path.join("/");
         let modified = if let Some(&header::IfModifiedSince(ref value)) = req.headers().get() {
@@ -98,6 +136,11 @@ impl<'a> Router<'a> {
             &Method::Delete => future::ok(res.with_status(StatusCode::MethodNotAllowed)),
             _ => future::ok(res.with_status(StatusCode::MethodNotAllowed)),
         }
+    }
+
+    fn get_media_entries(&self, id: &str) -> Result<MediaStore, &'static str> {
+         let path = self.dir_www.to_string() + "/vcms/" + id;
+         get_paths(&path[..], "library")
     }
 }
 
@@ -165,17 +208,26 @@ impl<'a> Service for Router<'a> {
                         // Session cookie found (get ID)
                         // Valid session cookie so manage request
                         if let Ok(id) = c.get_value(Some(self.key)) {
+                            // File handler
                             if parent == "library" {
                                 let mut path_files = path.clone();
                                 path_files.insert(0, id);
                                 path_files.insert(0, "vcms".to_string());
                                 self.manage_file(req, Response::new(), &path_files)
                             } else {
-                                // UI/File handler
-                                let body = "<!DOCTYPE html><html><head><meta charset=\"utf-8\" /><title>get cookie</title></head><body>id = ".to_string() + &id[..] + "</body>";
-                                future::ok(Response::new()
-                                    .with_header(ContentLength(body.len() as u64))
-                                    .with_body(body))
+                                // UI/JSON handler
+                                if let Ok(media_store) = self.get_media_entries(&id[..]) {
+                                    let body = serde_json::to_string(&media_store).unwrap();
+                                    future::ok(Response::new()
+                                        .with_header(ContentLength(body.len() as u64))
+                                        .with_body(body))
+                                } else {
+                                    let body = "<!DOCTYPE html><html><head><meta charset=\"utf-8\" /><title>Error</title></head><body>Unable to retrieve contents for ".to_string() + &id[..] + " id.</body>";
+                                    future::ok(Response::new()
+                                        .with_status(StatusCode::InternalServerError)
+                                        .with_header(ContentLength(body.len() as u64))
+                                        .with_body(body))
+                                }
                             }
                         // Invalid session cookie; so clear out session cookie and redirect CAS login
                         } else {
@@ -207,6 +259,7 @@ impl<'a> Service for Router<'a> {
                             Ok(cas::ServiceResponse::Success(id)) => {
                                 // Add session cookie
                                 if let Ok(c) = cookie::Cookie::new(Some(cookie::CookiePrefix::HOST), "id", &id[..], Some(self.key)) {
+                                    // File handler
                                     if parent == "library" {
                                         let mut path_files = path.clone();
                                         path_files.insert(0, id);
@@ -223,7 +276,7 @@ impl<'a> Service for Router<'a> {
                                                 ])
                                             ),
                                             &path_files)
-                                    // UI/File handler
+                                    // UI/JSON handler
                                     } else {
                                         let body = "<!DOCTYPE html><html><head><meta charset=\"utf-8\" /><title>set session</title></head><body>set id cookie.</body>";
                                         future::ok(Response::new()
