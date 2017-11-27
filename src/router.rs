@@ -1,6 +1,6 @@
 use futures::future;
 use tokio_core::reactor::Handle;
-use hyper::header::{ContentLength, ContentType};
+use hyper::header::{ContentLength, ContentType, Location, CacheControl, CacheDirective};
 use hyper::server::{Service, Request, Response};
 use hyper::{Method, Head, Get, Post, Delete, StatusCode, Uri, mime, header};
 use hyper;
@@ -257,41 +257,23 @@ impl<'a> Service for Router<'a> {
                         match self.cas.verify_from_request(req.uri().query(), &self.service_url(&path)[..]) {
                             // If this was a redirect from CAS with token then verify and setup session cookie.
                             Ok(cas::ServiceResponse::Success(id)) => {
-                                // Add session cookie
+                                // Add session cookie with id and redirect to original page
+                                // Do not include CAS ticket query
                                 if let Ok(c) = cookie::Cookie::new(Some(cookie::CookiePrefix::HOST), "id", &id[..], Some(self.key)) {
-                                    // File handler
-                                    if parent == "library" {
-                                        let mut path_files = path.clone();
-                                        path_files.insert(0, id);
-                                        path_files.insert(0, "vcms".to_string());
-                                        self.manage_file(req,
-                                             Response::new()
-                                            .with_header(
-                                                hyper::header::SetCookie(vec![
-                                                    c.with_path(Some("/"))
-                                                        .with_secure(true)
-                                                        .with_http_only(true)
-                                                        .with_same_site(Some(cookie::SameSite::LAX))
-                                                        .get_full_value()
-                                                ])
-                                            ),
-                                            &path_files)
-                                    // UI/JSON handler
-                                    } else {
-                                        let body = "<!DOCTYPE html><html><head><meta charset=\"utf-8\" /><title>set session</title></head><body>set id cookie.</body>";
-                                        future::ok(Response::new()
-                                            .with_header(ContentLength(body.len() as u64))
-                                            .with_header(
-                                                hyper::header::SetCookie(vec![
-                                                    c.with_path(Some("/"))
-                                                        .with_secure(true)
-                                                        .with_http_only(true)
-                                                        .with_same_site(Some(cookie::SameSite::LAX))
-                                                        .get_full_value()
-                                                ])
-                                            )
-                                            .with_body(body))
-                                    }
+                                    let path_url = "/".to_string() + &*path.join("/");
+                                    future::ok(Response::new()
+                                        .with_status(StatusCode::Found)
+                                        .with_header(Location::new(path_url))
+                                        .with_header(CacheControl(vec![CacheDirective::NoCache]))
+                                        .with_header(
+                                            hyper::header::SetCookie(vec![
+                                                c.with_path(Some("/"))
+                                                    .with_secure(true)
+                                                    .with_http_only(true)
+                                                    .with_same_site(Some(cookie::SameSite::LAX))
+                                                    .get_full_value()
+                                            ])
+                                        ))
                                 // ERROR: unable to set session
                                 } else {
                                     let body = "<!DOCTYPE html><html><head><meta charset=\"utf-8\" /><title>500 login - set session error</title></head><body>Unable to set session.</body>";
@@ -300,7 +282,7 @@ impl<'a> Service for Router<'a> {
                                         .with_header(ContentLength(body.len() as u64))
                                         .with_body(body))
                                 }
-                            }
+                            },
                             // If not a redirect from CAS, or Ticket error, then redirect to CAS (Make sure not to run into infinite loop)
                             Ok(cas::ServiceResponse::Failure(e)) => {
                                 print!("[CAS VERIFY RESPONSE] {:?}\n", e);
