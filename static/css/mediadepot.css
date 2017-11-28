@@ -18,6 +18,12 @@ color: black;
 background-color: #1889b7;
 border-color: #126789;
 }
+.purge-warning {
+    margin: 1rem 0rem;
+    background-color: #c2ecfd;
+    color: black;
+    border-color: #99e0fd;
+}
 .carded-label {
     display: none;
 }
