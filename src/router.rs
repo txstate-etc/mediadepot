@@ -249,7 +249,7 @@ impl<'a> Service for Router<'a> {
                     future::ok(res)
                 }
                 // CSS and image resource files
-                (&Get, "resources") | (&Head, "resources") => {
+                (&Get, "static") | (&Head, "static") => {
                     self.manage_file(req, Response::new(), &path)
                 }
                 // Allow to logout without checking if logged in; so if a valid CAS user (authentication)
