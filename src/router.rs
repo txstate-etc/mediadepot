@@ -8,6 +8,7 @@ use key::Key;
 use percent_encoding::{percent_decode, utf8_percent_encode, DEFAULT_ENCODE_SET};
 use std::fs;
 use serde_json;
+use chrono::prelude::{DateTime, Local};
 use cookie;
 use cas;
 use files;
@@ -17,7 +18,7 @@ use files;
 
 #[derive(Serialize, Debug)]
 enum MediaStore {
-    File(String),
+    File { name: String, date: String },
     Dir { name: String, entries: Vec<MediaStore> },
 }
 
@@ -81,10 +82,15 @@ fn get_paths(root: &str, name: &str) -> Result<MediaStore, &'static str>  {
     let path = root.to_string() + "/" + name;
     let metadata = fs::metadata(&*path).map_err(|_| "Unable to stat file or directory")?;
     if metadata.is_file() {
-        Ok(MediaStore::File(name.to_string()))
+        if let Ok(modified) = metadata.modified() {
+            let dt = DateTime::<Local>::from(modified); // Add three weeks? + Duration::new(21 * 24 * 60 * 60, 0);
+            Ok(MediaStore::File{name: name.to_string(), date: dt.format("%a %b %e %Y").to_string()})
+        } else {
+            Err("Unable to access file modified time")
+        }
     } else if metadata.is_dir() {
         match fs::read_dir(&*path) {
-            Err(e) => Err("Unable to access directory"),
+            Err(_) => Err("Unable to access directory"),
             Ok(files) => {
                 let mut entries: Vec<MediaStore> = Vec::new();
                 for file in files {

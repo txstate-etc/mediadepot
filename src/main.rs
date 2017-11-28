@@ -14,6 +14,7 @@ extern crate percent_encoding;
 extern crate xml;
 extern crate mime;
 extern crate mime_guess;
+extern crate chrono;
 extern crate serde;
 extern crate serde_json;
 
