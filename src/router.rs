@@ -18,8 +18,43 @@ use files;
 
 #[derive(Serialize, Debug)]
 enum MediaStore {
-    File { name: String, date: String },
+    File { name: String, date: String, size: u64 },
     Dir { name: String, entries: Vec<MediaStore> },
+}
+
+fn mediastore(root: &str, name: &str) -> Result<MediaStore, &'static str>  {
+    let path = root.to_string() + "/" + name;
+    let metadata = fs::metadata(&*path).map_err(|_| "Unable to stat file or directory")?;
+    if metadata.is_file() {
+        if let Ok(modified) = metadata.modified() {
+            let dt = DateTime::<Local>::from(modified); // Add three weeks? + Duration::new(21 * 24 * 60 * 60, 0);
+            Ok(MediaStore::File{name: name.to_string(), date: dt.format("%Y-%m-%d").to_string(), size: metadata.len()})
+        } else {
+            Err("Unable to access file modified time")
+        }
+    } else if metadata.is_dir() {
+        match fs::read_dir(&*path) {
+            Err(_) => Err("Unable to access directory"),
+            Ok(files) => {
+                let mut entries: Vec<MediaStore> = Vec::new();
+                for file in files {
+                    if let Ok(file) = file {
+                        if let Ok(filename) = file.file_name().into_string() {
+                            // Skip hidden files and directories
+                            if !filename.starts_with(".") {
+                                if let Ok(entry) = mediastore(&path[..], &filename[..]) {
+                                    entries.push(entry);
+                                }
+                            }
+                        }
+                    }
+                }
+                Ok(MediaStore::Dir{name: name.to_string(), entries: entries})
+            },
+        }
+    } else {
+        Err("Unsupported entry type.")
+    }
 }
 
 // Make sure to leave out directory structures such as:
@@ -78,41 +113,6 @@ pub struct Router<'a> {
     cas: &'a cas::CasClient,
 }
 
-fn get_paths(root: &str, name: &str) -> Result<MediaStore, &'static str>  {
-    let path = root.to_string() + "/" + name;
-    let metadata = fs::metadata(&*path).map_err(|_| "Unable to stat file or directory")?;
-    if metadata.is_file() {
-        if let Ok(modified) = metadata.modified() {
-            let dt = DateTime::<Local>::from(modified); // Add three weeks? + Duration::new(21 * 24 * 60 * 60, 0);
-            Ok(MediaStore::File{name: name.to_string(), date: dt.format("%a %b %e %Y").to_string()})
-        } else {
-            Err("Unable to access file modified time")
-        }
-    } else if metadata.is_dir() {
-        match fs::read_dir(&*path) {
-            Err(_) => Err("Unable to access directory"),
-            Ok(files) => {
-                let mut entries: Vec<MediaStore> = Vec::new();
-                for file in files {
-                    if let Ok(file) = file {
-                        if let Ok(filename) = file.file_name().into_string() {
-                            // Skip hidden files and directories
-                            if !filename.starts_with(".") {
-                                if let Ok(entry) = get_paths(&path[..], &filename[..]) {
-                                    entries.push(entry);
-                                }
-                            }
-                        }
-                    }
-                }
-                Ok(MediaStore::Dir{name: name.to_string(), entries: entries})
-            },
-        }
-    } else {
-        Err("Unsupported entry type.")
-    }
-}
-
 impl<'a> Router<'a> {
     pub fn new(handle: Handle, dir_www: &'a str, cookie_key: &'a Key, domain: &'a Uri, cas_client: &'a cas::CasClient) -> Router<'a> {
         Router{handle: handle, dir_www: dir_www, key: cookie_key, domain: domain, cas: cas_client}
@@ -144,9 +144,9 @@ impl<'a> Router<'a> {
         }
     }
 
-    fn get_media_entries(&self, id: &str) -> Result<MediaStore, &'static str> {
+    fn get_media(&self, id: &str) -> Result<MediaStore, &'static str> {
          let path = self.dir_www.to_string() + "/vcms/" + id;
-         get_paths(&path[..], "library")
+         mediastore(&path[..], "library")
     }
 }
 
@@ -222,8 +222,8 @@ impl<'a> Service for Router<'a> {
                                 self.manage_file(req, Response::new(), &path_files)
                             } else {
                                 // UI/JSON handler
-                                if let Ok(media_store) = self.get_media_entries(&id[..]) {
-                                    let body = serde_json::to_string(&media_store).unwrap();
+                                if let Ok(media) = self.get_media(&id[..]) {
+                                    let body = serde_json::to_string(&media).unwrap();
                                     future::ok(Response::new()
                                         .with_header(ContentLength(body.len() as u64))
                                         .with_body(body))
