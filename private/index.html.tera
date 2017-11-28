@@ -6,13 +6,13 @@
         <title>YouStar Media Depot</title>
         <link rel="stylesheet" href="https://maxcdn.bootstrapcdn.com/bootstrap/4.0.0-beta.2/css/bootstrap.min.css" integrity="sha384-PsH8R72JQ3SOdhVi3uxftmaW6Vc51MKb0q5P2rRUpPvrszuE4W1povHYgTpBfshb" crossorigin="anonymous">
         <link rel="stylesheet" href="https://maxcdn.bootstrapcdn.com/font-awesome/4.7.0/css/font-awesome.min.css"/>
-        <link rel="stylesheet" href="css/mediadepot.css"/>
+        <link rel="stylesheet" href="/static/css/mediadepot.css"/>
     </head>
     <body>
         <div class="container-fluid">
             <div class="navbar">
                 <div class="navbar-brand">
-                    <img class="youstar-logo" src="images/YouStarStudio-logo-rgb.jpg" alt="You Star Media Depot"/>
+                    <img class="youstar-logo" src="/static/images/YouStarStudio-logo-rgb.jpg" alt="You Star Media Depot"/>
                 </div>
                 <button type="button" class="btn btn-primary navbar-btn btn-sm btn-logout">Logout</button>
             </div>
@@ -51,7 +51,7 @@
                     <tr>
                         <td>
                             <div class="thumbnail-container">
-                                <img class="md-thumbnail" src="{% if e.thumbnails | length > 0 %}{{ e.thumbnails[0] }}{% else %}static/images/video-default.png{% endif %}" alt="MyFirstMovie Thumbnail" />
+                                <img class="md-thumbnail" src="{% if e.thumbnails | length > 0 %}{{ e.thumbnails[0] }}{% else %}/static/images/video-default.png{% endif %}" alt="MyFirstMovie Thumbnail" />
                             </div>
                         </td>
                         <td>
