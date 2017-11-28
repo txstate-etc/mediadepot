@@ -57,6 +57,74 @@ fn mediastore(root: &str, name: &str) -> Result<MediaStore, &'static str>  {
     }
 }
 
+#[derive(Serialize, Debug)]
+struct Media {
+    name: String,
+    path: String,
+    date: String,
+    size: u64,
+    thumbnails: Vec<String>,
+}
+
+fn media(media_store: Result<MediaStore, &'static str>) -> Result<Vec<Media>, &'static str> {
+    let media_store = media_store?;
+    let media_list = match media_store {
+        MediaStore::Dir{name, entries} => {
+            let mut ms = Vec::new();
+            let path = name;
+            for e in entries {
+                match e {
+                    MediaStore::Dir{name, entries} => {
+                        let path = path.clone() + "/" + &name[..];
+                        let mut media_flag = false;
+                        let mut media_info = Media{
+                            name: "".to_string(),
+                            path: "".to_string(),
+                            date: "".to_string(),
+                            size: 0,
+                            thumbnails: Vec::new(),
+                        };
+                        for e in entries {
+                            match e {
+                                MediaStore::File{name, date, size} => {
+                                    if name.ends_with(".m4v") {
+                                        media_flag = true;
+                                        media_info.path = path.clone() + "/" + &name[..];
+                                        media_info.name = name;
+                                        media_info.date = date;
+                                        media_info.size = size;
+                                    }
+                                },
+                                MediaStore::Dir{name, entries} => {
+                                    if name == "thumbnails" {
+                                        for e in entries {
+                                            match e {
+                                                MediaStore::File{name, date: _, size: _} => {
+                                                    if name.ends_with(".jpg") {
+                                                        media_info.thumbnails.push(path.clone() + "/thumbnails/" + &name[..])
+                                                    }
+                                                },
+                                                _ => (),
+                                            }
+                                        }
+                                    }
+                                },
+                            }
+                        }
+                        if media_flag {
+                            ms.push(media_info)
+                        }
+                    },
+                    _ => (),
+                }
+            }
+            ms
+        },
+        _ => Vec::new(),
+    };
+    Ok(media_list)
+}
+
 // Make sure to leave out directory structures such as:
 //   "/", "..", and hidden paths that start with '.' character.
 // May also want not include bash commands such as:
@@ -144,9 +212,9 @@ impl<'a> Router<'a> {
         }
     }
 
-    fn get_media(&self, id: &str) -> Result<MediaStore, &'static str> {
+    fn get_media(&self, id: &str) -> Result<Vec<Media>, &'static str> {
          let path = self.dir_www.to_string() + "/vcms/" + id;
-         mediastore(&path[..], "library")
+         media(mediastore(&path[..], "library"))
     }
 }
 
