@@ -1,5 +1,6 @@
 #[macro_use] extern crate serde_derive;
 #[macro_use] extern crate lazy_static;
+#[macro_use] extern crate tera;
 extern crate futures;
 extern crate hyper;
 extern crate rustls;
@@ -35,6 +36,7 @@ use hyper::Uri;
 use hyper::server::Http;
 use router::Router;
 use tokio_rustls::ServerConfigExt;
+use tera::Tera;
 
 fn load_certs(filename: &str) -> Vec<rustls::Certificate> {
     let certfile = std::fs::File::open(filename).expect("cannot open certificate file");
@@ -48,6 +50,14 @@ fn load_private_key(filename: &str) -> rustls::PrivateKey {
     let keys = pemfile::rsa_private_keys(&mut reader).unwrap();
     assert!(keys.len() == 1);
     keys[0].clone()
+}
+
+lazy_static! {
+    static ref TEMPLATES: Tera = {
+        let mut tera = compile_templates!("private/templates/*");
+        tera.autoescape_on(vec!["html"]);
+        tera
+    };
 }
 
 // ```openssl rand -base64 32```
@@ -113,7 +123,7 @@ fn main() {
             let http = http.clone();
             let done = arc_config.accept_async(sock)
                 .map(move |stream| {
-                    let r = Router::new(h.clone(), &*ROOT_DIR, &COOKIE_KEY, &DOMAIN, &CAS_CLIENT);
+                    let r = Router::new(h.clone(), &*ROOT_DIR, &COOKIE_KEY, &DOMAIN, &CAS_CLIENT, &TEMPLATES);
                     http.bind_connection(&h, stream, remote_addr, r);
                 })
                 .map_err(move |err| println!("Error: {:?} - {}", err, remote_addr));

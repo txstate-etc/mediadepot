@@ -1,6 +1,6 @@
 use futures::future;
 use tokio_core::reactor::Handle;
-use hyper::header::{ContentLength, ContentType, Location, CacheControl, CacheDirective};
+use hyper::header::{ContentLength, ContentType, Location, CacheControl, CacheDirective, qitem};
 use hyper::server::{Service, Request, Response};
 use hyper::{Method, Head, Get, Post, Delete, StatusCode, Uri, mime, header};
 use hyper;
@@ -9,6 +9,7 @@ use percent_encoding::{percent_decode, utf8_percent_encode, DEFAULT_ENCODE_SET};
 use std::fs;
 use serde_json;
 use chrono::prelude::{DateTime, Local};
+use tera::{Tera, Context};
 use cookie;
 use cas;
 use files;
@@ -179,11 +180,12 @@ pub struct Router<'a> {
     key: &'a Key,
     domain: &'a Uri,
     cas: &'a cas::CasClient,
+    templates: &'a Tera,
 }
 
 impl<'a> Router<'a> {
-    pub fn new(handle: Handle, dir_www: &'a str, cookie_key: &'a Key, domain: &'a Uri, cas_client: &'a cas::CasClient) -> Router<'a> {
-        Router{handle: handle, dir_www: dir_www, key: cookie_key, domain: domain, cas: cas_client}
+    pub fn new(handle: Handle, dir_www: &'a str, cookie_key: &'a Key, domain: &'a Uri, cas_client: &'a cas::CasClient, templates: &'a Tera) -> Router<'a> {
+        Router{handle: handle, dir_www: dir_www, key: cookie_key, domain: domain, cas: cas_client, templates: templates}
     }
 
     fn service_url(&self, path: &Vec<String>) -> String {
@@ -233,6 +235,14 @@ impl<'a> Service for Router<'a> {
             let mut parent = "";
             if path.len() > 0 {
                 parent = &path[0][..];
+            }
+            let mut accept_json = false;
+            if let Some(accept) = req.headers().get::<header::Accept>() {
+                for a in &accept.0 {
+                    if *a == qitem(mime::APPLICATION_JSON) {
+                        accept_json = true;
+                    }
+                }
             }
             match (req.method(), parent) {
                 // Health checks.
@@ -291,9 +301,29 @@ impl<'a> Service for Router<'a> {
                             } else {
                                 // UI/JSON handler
                                 if let Ok(media) = self.get_media(&id[..]) {
-                                    let body = serde_json::to_string(&media).unwrap();
-                                    future::ok(Response::new()
-                                        .with_header(ContentLength(body.len() as u64))
+                                    let body: String;
+                                    let mut res = Response::new();
+                                    // JSON
+                                    if accept_json {
+                                        body = serde_json::to_string(&media).unwrap();
+                                        res = res.with_header(ContentType(mime::APPLICATION_JSON));
+                                    // Template
+                                    } else {
+                                        let mut context = Context::new();
+                                        context.add("media", &media);
+                                        body = match self.templates.render("index.html", &context) {
+                                            Ok(s) => s,
+                                            Err(e) => {
+                                                println!("Error: {}", e);
+                                                for e in e.iter().skip(1) {
+                                                    println!("Reason: {}", e);
+                                                }
+                                                "error".to_string()
+                                            },
+                                        };
+                                        res = res.with_header(ContentType(mime::TEXT_HTML_UTF_8));
+                                    }
+                                    future::ok(res.with_header(ContentLength(body.len() as u64))
                                         .with_body(body))
                                 } else {
                                     let body = "<!DOCTYPE html><html><head><meta charset=\"utf-8\" /><title>Error</title></head><body>Unable to retrieve contents for ".to_string() + &id[..] + " id.</body>";
