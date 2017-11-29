@@ -18,6 +18,9 @@ color: black;
 background-color: #1889b7;
 border-color: #126789;
 }
+.no-content, .error {
+    font-size: 1.5rem;
+}
 .purge-warning {
     margin: 1rem 0rem;
     background-color: #c2ecfd;
