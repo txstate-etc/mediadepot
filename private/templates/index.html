@@ -69,21 +69,7 @@
                         <td><div class="carded-label">Created:</div>{{ e.date }}</td>
                         <td><div class="carded-label">Available Until:</div>{{ e.date }}</td>
                         <td>
-<!--                            <div class="dropdown">
-                                <button class="btn video-actions" type="button" id="video1id" data-toggle="dropdown" aria-haspopup="true" aria-expanded="false" aria-label="View actions for video">
-                                    <i class="fa fa-ellipsis-h" aria-hidden="true"></i>
-                                </button>
-                                <div class="dropdown-menu dropdown-menu-right" aria-labelledby="video1id">
-                                    <a class="dropdown-item" href="{{ e.path }}">Download</a>
-                                    <a class="dropdown-item" href="#">Copy to Mediaflo</a>
-                                    <a class="dropdown-item" href="#">Delete</a>
-                                </div>
-                            </div> -->
-<!--                            <div class="action-links"> -->
-                                <a href="{{ e.path }}">Download</a>
-<!--                                <a href="#">Copy to Mediaflo</a> -->
-<!--                                <a href="#">Delete</a> -->
-<!--                            </div> -->
+                            <a href="{{ e.path }}">Download</a>
                         </td>
                     </tr>
 {% endfor %}{% else %}
