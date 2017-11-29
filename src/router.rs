@@ -278,7 +278,18 @@ impl<'a> Service for Router<'a> {
                                 ])
                             ))
                     } else {
-                        let body = "<!DOCTYPE html><html><head><meta charset=\"utf-8\" /><title>500 logout - clear session error</title></head><body>Unable to clear session.</body>";
+                        let mut context = Context::new();
+                        context.add("error", &"Unable to clear session");
+                        let body = match self.templates.render("error.html", &context) {
+                            Ok(s) => s,
+                            Err(e) => {
+                                println!("Error: {}", e);
+                                for e in e.iter().skip(1) {
+                                    println!("Reason: {}", e);
+                                }
+                                "error".to_string()
+                            },
+                        };
                         future::ok(Response::new()
                             .with_status(StatusCode::InternalServerError)
                             .with_header(ContentLength(body.len() as u64))
@@ -325,8 +336,20 @@ impl<'a> Service for Router<'a> {
                                     }
                                     future::ok(res.with_header(ContentLength(body.len() as u64))
                                         .with_body(body))
+                                // User does not contain a directory structure such as <id>/library
                                 } else {
-                                    let body = "<!DOCTYPE html><html><head><meta charset=\"utf-8\" /><title>Error</title></head><body>Unable to retrieve contents for ".to_string() + &id[..] + " id.</body>";
+                                    let mut context = Context::new();
+                                    context.add("error", &"Unable to find a media library");
+                                    let body = match self.templates.render("error.html", &context) {
+                                        Ok(s) => s,
+                                        Err(e) => {
+                                            println!("Error: {}", e);
+                                            for e in e.iter().skip(1) {
+                                                println!("Reason: {}", e);
+                                            }
+                                            "error".to_string()
+                                        },
+                                    };
                                     future::ok(Response::new()
                                         .with_status(StatusCode::InternalServerError)
                                         .with_header(ContentLength(body.len() as u64))
@@ -349,7 +372,18 @@ impl<'a> Service for Router<'a> {
                                     ))
                             // ERROR: Unable to create clear cookie
                             } else {
-                                let body = "<!DOCTYPE html><html><head><meta charset=\"utf-8\" /><title>500 login retry - clear session error</title></head><body>Unable to clear session in attempt to retry login.</body>";
+                                let mut context = Context::new();
+                                context.add("error", &"Unable to clear session in attempt to retry login");
+                                let body = match self.templates.render("error.html", &context) {
+                                    Ok(s) => s,
+                                    Err(e) => {
+                                        println!("Error: {}", e);
+                                        for e in e.iter().skip(1) {
+                                            println!("Reason: {}", e);
+                                        }
+                                        "error".to_string()
+                                    },
+                                };
                                 future::ok(Response::new()
                                     .with_status(StatusCode::InternalServerError)
                                     .with_header(ContentLength(body.len() as u64))
@@ -380,7 +414,18 @@ impl<'a> Service for Router<'a> {
                                         ))
                                 // ERROR: unable to set session
                                 } else {
-                                    let body = "<!DOCTYPE html><html><head><meta charset=\"utf-8\" /><title>500 login - set session error</title></head><body>Unable to set session.</body>";
+                                    let mut context = Context::new();
+                                    context.add("error", &"Unable to set session");
+                                    let body = match self.templates.render("error.html", &context) {
+                                        Ok(s) => s,
+                                        Err(e) => {
+                                            println!("Error: {}", e);
+                                            for e in e.iter().skip(1) {
+                                                println!("Reason: {}", e);
+                                            }
+                                            "error".to_string()
+                                        },
+                                    };
                                     future::ok(Response::new()
                                         .with_status(StatusCode::InternalServerError)
                                         .with_header(ContentLength(body.len() as u64))
