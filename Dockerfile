@@ -10,8 +10,9 @@ RUN update-ca-certificates \
   && groupadd -g 7402 vcms \
   && useradd -r -u 48 -g 48 -G 797,7402 -c 'Media Depot Service' -d /var/lib/www mdepot \
   && mkdir -p /rootfs/etc/ssl /rootfs/bin/ /rootfs/var/lib/www \
-  && cp /etc/passwd /rootfs/etc/ \
-  && cp /etc/group /rootfs/etc/ \
+  && cp -r static private /rootfs/var/lib/www/ \
+  && chown -R 48.48 /rootfs/var/lib/www/ \
+  && cp /etc/passwd /etc/group /rootfs/etc/ \
   && cp -r /etc/ssl/certs /rootfs/etc/ssl/ \
   && cp /root/target/x86_64-unknown-linux-musl/release/mediadepot /rootfs/bin/
 
