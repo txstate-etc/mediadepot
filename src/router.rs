@@ -17,46 +17,6 @@ use files;
 
 // Basic utilities
 
-#[derive(Serialize, Debug)]
-enum MediaStore {
-    File { name: String, date: String, size: u64 },
-    Dir { name: String, entries: Vec<MediaStore> },
-}
-
-fn mediastore(root: &str, name: &str) -> Result<MediaStore, &'static str>  {
-    let path = root.to_string() + "/" + name;
-    let metadata = fs::metadata(&*path).map_err(|_| "Unable to stat file or directory")?;
-    if metadata.is_file() {
-        if let Ok(modified) = metadata.modified() {
-            let dt = DateTime::<Local>::from(modified); // Add three weeks? + Duration::new(21 * 24 * 60 * 60, 0);
-            Ok(MediaStore::File{name: name.to_string(), date: dt.format("%Y-%m-%d").to_string(), size: metadata.len()})
-        } else {
-            Err("Unable to access file modified time")
-        }
-    } else if metadata.is_dir() {
-        match fs::read_dir(&*path) {
-            Err(_) => Err("Unable to access directory"),
-            Ok(files) => {
-                let mut entries: Vec<MediaStore> = Vec::new();
-                for file in files {
-                    if let Ok(file) = file {
-                        if let Ok(filename) = file.file_name().into_string() {
-                            // Skip hidden files and directories
-                            if !filename.starts_with(".") {
-                                if let Ok(entry) = mediastore(&path[..], &filename[..]) {
-                                    entries.push(entry);
-                                }
-                            }
-                        }
-                    }
-                }
-                Ok(MediaStore::Dir{name: name.to_string(), entries: entries})
-            },
-        }
-    } else {
-        Err("Unsupported entry type.")
-    }
-}
 
 #[derive(Serialize, Debug)]
 struct Media {
@@ -64,66 +24,44 @@ struct Media {
     path: String,
     date: String,
     size: u64,
-    thumbnails: Vec<String>,
+    //thumbnails: Vec<String>,
 }
 
-fn media(media_store: Result<MediaStore, &'static str>) -> Result<Vec<Media>, &'static str> {
-    let media_store = media_store?;
-    let media_list = match media_store {
-        MediaStore::Dir{name, entries} => {
-            let mut ms = Vec::new();
-            let path = name;
-            for e in entries {
-                match e {
-                    MediaStore::Dir{name, entries} => {
-                        let path = path.clone() + "/" + &name[..];
-                        let mut media_flag = false;
-                        let mut media_info = Media{
-                            name: "".to_string(),
-                            path: "".to_string(),
-                            date: "".to_string(),
-                            size: 0,
-                            thumbnails: Vec::new(),
-                        };
-                        for e in entries {
-                            match e {
-                                MediaStore::File{name, date, size} => {
-                                    if name.ends_with(".m4v") {
-                                        media_flag = true;
-                                        media_info.path = path.clone() + "/" + &name[..];
-                                        media_info.name = name;
-                                        media_info.date = date;
-                                        media_info.size = size;
+// Generate a list of media files and their attributes for path under root
+fn media(root: &str, path: &str) -> Result<Vec<Media>, &'static str> {
+    let base = root.to_string() + "/" + path;
+    let metadata = fs::metadata(&*base).map_err(|_| "Unable to stat file or directory")?;
+
+    if metadata.is_dir() {
+        match fs::read_dir(&*base) {
+            Err(_) => Err("Unable to access directory"),
+            Ok(files) => {
+                let mut media: Vec<Media> = Vec::new();
+                for file in files {
+                    if let Ok(file) = file {
+                        if let Ok(filename) = file.file_name().into_string() {
+                            if filename.ends_with(".m4v") {
+                                if let Ok(metadata) = file.metadata() {
+                                    if let Ok(modified) = metadata.modified() {
+                                        let dt = DateTime::<Local>::from(modified);
+                                        media.push(Media{
+                                            path: path.to_string() + "/" + &filename[..],
+                                            name: filename,
+                                            date: dt.format("%Y-%m-%d").to_string(),
+                                            size: metadata.len(),
+                                        });
                                     }
-                                },
-                                MediaStore::Dir{name, entries} => {
-                                    if name == "thumbnails" {
-                                        for e in entries {
-                                            match e {
-                                                MediaStore::File{name, date: _, size: _} => {
-                                                    if name.ends_with(".jpg") {
-                                                        media_info.thumbnails.push(path.clone() + "/thumbnails/" + &name[..])
-                                                    }
-                                                },
-                                                _ => (),
-                                            }
-                                        }
-                                    }
-                                },
+                                }
                             }
                         }
-                        if media_flag {
-                            ms.push(media_info)
-                        }
-                    },
-                    _ => (),
+                    }
                 }
-            }
-            ms
-        },
-        _ => Vec::new(),
-    };
-    Ok(media_list)
+                Ok(media)
+            },
+        }
+    } else {
+        Err("Invalid location")
+    }
 }
 
 // Make sure to leave out directory structures such as:
@@ -215,8 +153,8 @@ impl<'a> Router<'a> {
     }
 
     fn get_media(&self, id: &str) -> Result<Vec<Media>, &'static str> {
-         let path = self.dir_www.to_string() + "/vcms/" + id;
-         media(mediastore(&path[..], "library"))
+         let root = self.dir_www.to_string() + "/vcms/" + id;
+         media(&root[..], "library")
     }
 }
 
