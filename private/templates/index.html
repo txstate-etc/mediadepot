@@ -41,7 +41,7 @@
                 </td>
                 <td><div class="carded-label">File Size:</div>{{ e.size | filesizeformat }}</td>
                 <td><div class="carded-label">Created:</div>{{ e.date | date(format="%b %e, %Y")}}</td>
-                <td><div class="carded-label">Available Until:</div>{{ e.date }}</td>
+                <td><div class="carded-label">Available Until:</div>{{ e.date | dateadd(days=21) | date(format="%b %e, %Y")}}</td>
                 <td>
                     <a href="{{ e.path }}">Download</a>
                 </td>

@@ -1,6 +1,7 @@
 #[macro_use] extern crate serde_derive;
 #[macro_use] extern crate lazy_static;
 #[macro_use] extern crate tera;
+#[macro_use] extern crate error_chain;
 extern crate futures;
 extern crate hyper;
 extern crate rustls;
@@ -18,12 +19,14 @@ extern crate mime_guess;
 extern crate chrono;
 extern crate serde;
 extern crate serde_json;
+extern crate time;
 
 mod key;
 mod cookie;
 mod cas;
 mod files;
 mod router;
+mod filters;
 
 use futures::{Future, Stream};
 use tokio_core::net::TcpListener;
@@ -56,6 +59,7 @@ lazy_static! {
     static ref TEMPLATES: Tera = {
         let mut tera = compile_templates!("private/templates/*");
         tera.autoescape_on(vec!["html"]);
+        tera.register_filter("dateadd", filters::dateadd);
         tera
     };
 }
