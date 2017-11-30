@@ -30,13 +30,6 @@ border-color: #126789;
 .carded-label {
     display: none;
 }
-.thumbnail-container {
-    width: 100%;
-}
-.md-thumbnail {
-    max-width: 150px;
-    height: auto;
-}
 .action-links {
     display: none;
 }
@@ -86,12 +79,6 @@ footer {
     }
     td:last-child{
       border-bottom: 0;
-    }
-    .thumbnail-container {
-        text-align: center;
-    }
-    .md-thumbnail {
-        max-width: 100%;
     }
     .carded-label {
         display: block;
