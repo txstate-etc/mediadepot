@@ -3,7 +3,6 @@
 {% block content %}
 <div class="container main-content">
     <h1 class="sr-only">Download Your YouStar Files</h1>
-    {% if media|length > 0 %}{% for e in media %}
     <div class="purge-warning alert alert-primary alert-dismissible fade show" role="alert">
         <i class="fa fa-exclamation-circle"></i>
         Videos will be permanently deleted after 3 weeks.
@@ -11,6 +10,7 @@
             <span aria-hidden="true">&times;</span>
         </button>
     </div>
+    {% if media|length > 0 %}{% for e in media %}
     <table class="table">
         <thead>
             <tr>
