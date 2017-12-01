@@ -10,25 +10,29 @@ body {
     max-height: 5rem;
 }
 .btn-logout {
-background-color: #20bcfb;
-border-color: #1889b7;
-color: black;
+background-color: #235eba;
+border-color: #1D4D99;
+color: #fff;
+padding: 0.75rem 2rem;
 }
 .btn-logout:hover {
-background-color: #1889b7;
-border-color: #126789;
+background-color: #1D4D99;
+border-color: #173c77;
 }
 .no-content, .error {
     font-size: 1.5rem;
 }
 .purge-warning {
     margin: 1rem 0rem;
-    background-color: #c2ecfd;
+    background-color: #d3f1fd;
     color: black;
     border-color: #99e0fd;
 }
 .carded-label {
     display: none;
+}
+.download-link {
+    color: #235EBA;
 }
 .action-links {
     display: none;
