@@ -195,11 +195,15 @@ impl<'a> Service for Router<'a> {
                         res.set_body(body);
                     }
                     future::ok(res)
-                }
+                },
                 // CSS and image resource files
-                (&Get, "static") | (&Head, "static") => {
-                    self.manage_file(req, Response::new(), &path)
-                }
+                (&Get, "static") | (&Head, "static") | (&Get, "favicon.ico") | (&Head, "favicon.ico") => {
+                    if parent == "favicon.ico" {
+                        self.manage_file(req, Response::new(), &vec!["static".to_string(), "images".to_string(), "favicon.ico".to_string()])
+                    } else {
+                        self.manage_file(req, Response::new(), &path)
+                    }
+                },
                 // Allow to logout without checking if logged in; so if a valid CAS user (authentication)
                 // does NOT have access (authorization) to access any routes, the user can still log out.
                 (&Get, "logout") => {
@@ -233,7 +237,7 @@ impl<'a> Service for Router<'a> {
                             .with_header(ContentLength(body.len() as u64))
                             .with_body(body))
                     }
-                }
+                },
                 // CAS infrastructure
                 // Route/Path were single page application will be accessed.
                 (&Get, "") | (&Get, "library") | (&Head, "library") | (&Delete, "library") => {
@@ -381,12 +385,12 @@ impl<'a> Service for Router<'a> {
                             }
                         }
                     }
-                }
+                },
                 // Generally CAS server announcements of SSO logouts
                 (&Post, _) => {
                    print!("[REQUEST] {:?}", req);
                    future::ok(Response::new())
-                }
+                },
                 _ => future::ok(Response::new().with_status(StatusCode::NotFound)),
             }
         } else {
