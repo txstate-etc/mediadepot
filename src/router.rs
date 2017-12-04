@@ -1,6 +1,6 @@
 use futures::future;
 use tokio_core::reactor::Handle;
-use hyper::header::{ContentLength, ContentType, Location, CacheControl, CacheDirective, qitem};
+use hyper::header::{ContentLength, ContentType, Location, CacheControl, CacheDirective, qitem, Server, StrictTransportSecurity};
 use hyper::server::{Service, Request, Response};
 use hyper::{Method, Head, Get, Post, Delete, StatusCode, Uri, mime, header};
 use hyper;
@@ -117,13 +117,31 @@ pub struct Router<'a> {
     dir_www: &'a str,
     key: &'a Key,
     domain: &'a Uri,
+    server: &'a str,
+    sts: u64,
     cas: &'a cas::CasClient,
     templates: &'a Tera,
 }
 
 impl<'a> Router<'a> {
-    pub fn new(handle: Handle, dir_www: &'a str, cookie_key: &'a Key, domain: &'a Uri, cas_client: &'a cas::CasClient, templates: &'a Tera) -> Router<'a> {
-        Router{handle: handle, dir_www: dir_www, key: cookie_key, domain: domain, cas: cas_client, templates: templates}
+    pub fn new(handle: Handle,
+        dir_www: &'a str,
+        cookie_key: &'a Key,
+        domain: &'a Uri,
+        server: &'a str,
+        sts: u64,
+        cas_client: &'a cas::CasClient,
+        templates: &'a Tera) -> Router<'a> {
+        Router{
+            handle: handle,
+            dir_www: dir_www,
+            key: cookie_key,
+            domain: domain,
+            server: server,
+            sts: sts,
+            cas: cas_client,
+            templates: templates
+        }
     }
 
     fn service_url(&self, path: &Vec<String>) -> String {
@@ -189,6 +207,8 @@ impl<'a> Service for Router<'a> {
                 (&Get, "health") | (&Head, "health") => {
                     let body: &'static [u8] = b"Up";
                     let mut res = Response::new()
+                        .with_header(Server::new(self.server.to_string()))
+                        .with_header(StrictTransportSecurity::including_subdomains(self.sts))
                         .with_header(ContentType(mime::TEXT_PLAIN))
                         .with_header(ContentLength(body.len() as u64));
                     if req.method() == &Get { 
@@ -209,6 +229,8 @@ impl<'a> Service for Router<'a> {
                 (&Get, "logout") => {
                     if let Ok(c) = cookie::Cookie::new(Some(cookie::CookiePrefix::HOST), "id", "", Some(self.key)) {
                         future::ok(self.cas.logout_redirect(&self.service_url(&vec!["/".to_string()]))
+                            .with_header(Server::new(self.server.to_string()))
+                            .with_header(StrictTransportSecurity::including_subdomains(self.sts))
                             .with_header(
                                 hyper::header::SetCookie(vec![
                                     c.with_path(Some("/"))
@@ -255,7 +277,9 @@ impl<'a> Service for Router<'a> {
                                 // UI/JSON handler
                                 if let Ok(media) = self.get_media(&id[..]) {
                                     let body: String;
-                                    let mut res = Response::new();
+                                    let mut res = Response::new()
+                                        .with_header(Server::new(self.server.to_string()))
+                                        .with_header(StrictTransportSecurity::including_subdomains(self.sts));
                                     // JSON
                                     if accept_json {
                                         body = serde_json::to_string(&media).unwrap();
@@ -293,6 +317,8 @@ impl<'a> Service for Router<'a> {
                                         },
                                     };
                                     future::ok(Response::new()
+                                        .with_header(Server::new(self.server.to_string()))
+                                        .with_header(StrictTransportSecurity::including_subdomains(self.sts))
                                         .with_status(StatusCode::InternalServerError)
                                         .with_header(ContentLength(body.len() as u64))
                                         .with_body(body))
@@ -302,6 +328,8 @@ impl<'a> Service for Router<'a> {
                         } else {
                             if let Ok(c) = cookie::Cookie::new(Some(cookie::CookiePrefix::HOST), "id", "", Some(self.key)) {
                                 future::ok(self.cas.login_redirect(&self.service_url(&path)[..])
+                                    .with_header(Server::new(self.server.to_string()))
+                                    .with_header(StrictTransportSecurity::including_subdomains(self.sts))
                                     .with_header(
                                         hyper::header::SetCookie(vec![
                                             c.with_path(Some("/"))
@@ -327,6 +355,8 @@ impl<'a> Service for Router<'a> {
                                     },
                                 };
                                 future::ok(Response::new()
+                                    .with_header(Server::new(self.server.to_string()))
+                                    .with_header(StrictTransportSecurity::including_subdomains(self.sts))
                                     .with_status(StatusCode::InternalServerError)
                                     .with_header(ContentLength(body.len() as u64))
                                     .with_body(body))
@@ -342,6 +372,8 @@ impl<'a> Service for Router<'a> {
                                 if let Ok(c) = cookie::Cookie::new(Some(cookie::CookiePrefix::HOST), "id", &id[..], Some(self.key)) {
                                     let path_url = "/".to_string() + &*path.join("/");
                                     future::ok(Response::new()
+                                        .with_header(Server::new(self.server.to_string()))
+                                        .with_header(StrictTransportSecurity::including_subdomains(self.sts))
                                         .with_status(StatusCode::Found)
                                         .with_header(Location::new(path_url))
                                         .with_header(CacheControl(vec![CacheDirective::NoCache]))
@@ -369,6 +401,8 @@ impl<'a> Service for Router<'a> {
                                         },
                                     };
                                     future::ok(Response::new()
+                                        .with_header(Server::new(self.server.to_string()))
+                                        .with_header(StrictTransportSecurity::including_subdomains(self.sts))
                                         .with_status(StatusCode::InternalServerError)
                                         .with_header(ContentLength(body.len() as u64))
                                         .with_body(body))
@@ -377,11 +411,17 @@ impl<'a> Service for Router<'a> {
                             // If not a redirect from CAS, or Ticket error, then redirect to CAS (Make sure not to run into infinite loop)
                             Ok(cas::ServiceResponse::Failure(e)) => {
                                 print!("[CAS VERIFY RESPONSE] {:?}\n", e);
-                                future::ok(self.cas.login_redirect(&self.service_url(&path)[..]))
+                                future::ok(self.cas.login_redirect(&self.service_url(&path)[..])
+                                    .with_header(Server::new(self.server.to_string()))
+                                    .with_header(StrictTransportSecurity::including_subdomains(self.sts))
+                                )
                             }
                             Err(e) => {
                                 print!("[CAS VERIFY RESPONSE] {:?}\n", e);
-                                future::ok(self.cas.login_redirect(&self.service_url(&path)[..]))
+                                future::ok(self.cas.login_redirect(&self.service_url(&path)[..])
+                                    .with_header(Server::new(self.server.to_string()))
+                                    .with_header(StrictTransportSecurity::including_subdomains(self.sts))
+                                )
                             }
                         }
                     }
@@ -391,10 +431,18 @@ impl<'a> Service for Router<'a> {
                    print!("[REQUEST] {:?}", req);
                    future::ok(Response::new())
                 },
-                _ => future::ok(Response::new().with_status(StatusCode::NotFound)),
+                _ => future::ok(Response::new()
+                         .with_status(StatusCode::NotFound)
+                         .with_header(Server::new(self.server.to_string()))
+                         .with_header(StrictTransportSecurity::including_subdomains(self.sts))
+                     ),
             }
         } else {
-            future::ok(Response::new().with_status(StatusCode::NotFound))
+            future::ok(Response::new()
+                .with_status(StatusCode::NotFound)
+                .with_header(Server::new(self.server.to_string()))
+                .with_header(StrictTransportSecurity::including_subdomains(self.sts))
+            )
         }
     }
 }

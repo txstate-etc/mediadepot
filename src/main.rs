@@ -34,6 +34,7 @@ use tokio_core::reactor::Core;
 use rustls::internal::pemfile;
 use std::env;
 use key::Key;
+use percent_encoding::{utf8_percent_encode, DEFAULT_ENCODE_SET};
 use cas::CasClient;
 use hyper::Uri;
 use hyper::server::Http;
@@ -109,7 +110,7 @@ lazy_static! {
 lazy_static! {
     static ref SERVER: String = {
         match env::var("SERVER") {
-            Ok(server) => server,
+            Ok(server) => utf8_percent_encode(&server, DEFAULT_ENCODE_SET).to_string(),
             Err(_) => "Hyper".to_string(),
         }
     };
@@ -147,7 +148,7 @@ fn main() {
             let http = http.clone();
             let done = arc_config.accept_async(sock)
                 .map(move |stream| {
-                    let r = Router::new(h.clone(), &*ROOT_DIR, &COOKIE_KEY, &DOMAIN, &CAS_CLIENT, &TEMPLATES);
+                    let r = Router::new(h.clone(), &*ROOT_DIR, &COOKIE_KEY, &DOMAIN, &SERVER, *STS, &CAS_CLIENT, &TEMPLATES);
                     http.bind_connection(&h, stream, remote_addr, r);
                 })
                 .map_err(move |err| println!("Error: {:?} - {}", err, remote_addr));
