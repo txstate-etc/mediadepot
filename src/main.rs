@@ -105,6 +105,26 @@ lazy_static! {
     };
 }
 
+// example: SERVER=RustHyper
+lazy_static! {
+    static ref SERVER: String = {
+        match env::var("SERVER") {
+            Ok(server) => server,
+            Err(_) => "Hyper".to_string(),
+        }
+    };
+}
+
+// example: STS=63072000
+lazy_static! {
+    static ref STS: u64 = {
+        match env::var("STS") {
+            Ok(sts) => (&sts[..]).parse::<u64>().unwrap(),
+            Err(_) => 63072000,
+        }
+    };
+}
+
 fn main() {
     let address = match std::env::var("ADDRESS") {
         Ok(a) => a.to_owned(),
