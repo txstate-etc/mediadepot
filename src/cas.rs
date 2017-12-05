@@ -160,7 +160,7 @@ impl CasClient {
                             match status {
                                 XmlMatchStatus::None => {}
                                 XmlMatchStatus::ExpectSuccess => {
-                                    return ServiceResponse::Success(s);
+                                    return ServiceResponse::Success(s[..].to_lowercase());
                                 }
                             }
                         }
