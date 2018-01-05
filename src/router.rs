@@ -13,10 +13,15 @@ use tera::{Tera, Context};
 use cookie;
 use cas;
 use files;
-
+use jwt;
 
 // Basic utilities
 
+#[derive(Debug, Deserialize)]
+struct User {
+    id: String,
+    //exp: time,
+}
 
 #[derive(Serialize, Debug)]
 struct Media {
@@ -104,6 +109,18 @@ fn normalize_req_path(path: &str) -> Result<Vec<String>, &'static str> {
     })
 }
 
+fn with_mime(req: &Request, m: mime::Mime) -> bool {
+    if let Some(accept) = req.headers().get::<header::Accept>() {
+        for a in &accept.0 {
+            if *a == qitem(m.clone()) {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+
 // Handlers
 ////https://stackoverflow.com/questions/41179659/convert-vecstring-into-a-slice-of-str-in-rust
 
@@ -115,6 +132,7 @@ type RouterFuture = future::FutureResult<Response, hyper::Error>;
 pub struct Router<'a> {
     handle: Handle,
     dir_www: &'a str,
+    jwt: &'a [u8],
     key: &'a Key,
     domain: &'a Uri,
     server: &'a str,
@@ -126,6 +144,7 @@ pub struct Router<'a> {
 impl<'a> Router<'a> {
     pub fn new(handle: Handle,
         dir_www: &'a str,
+        jwt_key: &'a [u8],
         cookie_key: &'a Key,
         domain: &'a Uri,
         server: &'a str,
@@ -135,6 +154,7 @@ impl<'a> Router<'a> {
         Router{
             handle: handle,
             dir_www: dir_www,
+            jwt: jwt_key,
             key: cookie_key,
             domain: domain,
             server: server,
@@ -155,7 +175,7 @@ impl<'a> Router<'a> {
     }
 
     // If path is to student directory insert id in path vector
-    fn manage_file(&self, req: Request, res: Response, path: &Vec<String>) -> RouterFuture {
+    fn manage_file(&self, req: &Request, res: Response, path: &Vec<String>) -> RouterFuture {
         let path = self.dir_www.to_string() + "/" + &*path.join("/");
         let modified = if let Some(&header::IfModifiedSince(ref value)) = req.headers().get() {
             Some(value)
@@ -171,8 +191,195 @@ impl<'a> Router<'a> {
     }
 
     fn get_media(&self, id: &str) -> Result<Vec<Media>, &'static str> {
-         let root = self.dir_www.to_string() + "/vcms/" + id;
-         media(&root[..], "library")
+        let root = self.dir_www.to_string() + "/vcms/" + id;
+        media(&root[..], "library")
+    }
+
+    fn protected_content(&self, req: &Request, id: String, parent: &str, path: &Vec<String>) -> RouterFuture {
+        // File handler
+        if parent == "library" {
+            let mut path_files = path.clone();
+            path_files.insert(0, id);
+            path_files.insert(0, "vcms".to_string());
+            self.manage_file(&req, Response::new(), &path_files)
+        } else {
+            // UI/JSON handler
+            if let Ok(media) = self.get_media(&id[..]) {
+                let body: String;
+                let mut res = Response::new()
+                    .with_header(Server::new(self.server.to_string()))
+                    .with_header(StrictTransportSecurity::including_subdomains(self.sts));
+                // JSON
+                if with_mime(&req, mime::APPLICATION_JSON) {
+                    body = serde_json::to_string(&media).unwrap();
+                    res = res.with_header(ContentType(mime::APPLICATION_JSON));
+                // Template
+                } else {
+                    let mut context = Context::new();
+                    context.add("media", &media);
+                    body = match self.templates.render("index.html", &context) {
+                        Ok(s) => s,
+                        Err(e) => {
+                            println!("Error: {}", e);
+                            for e in e.iter().skip(1) {
+                                println!("Reason: {}", e);
+                            }
+                            "error".to_string()
+                        },
+                    };
+                    res = res.with_header(ContentType(mime::TEXT_HTML_UTF_8));
+                }
+                future::ok(res.with_header(ContentLength(body.len() as u64))
+                    .with_body(body))
+            // User does not contain a directory structure such as <id>/library
+            } else {
+                let mut context = Context::new();
+                context.add("error", &"Unable to find a media library");
+                let body = match self.templates.render("error.html", &context) {
+                    Ok(s) => s,
+                    Err(e) => {
+                        println!("Error: {}", e);
+                        for e in e.iter().skip(1) {
+                            println!("Reason: {}", e);
+                        }
+                        "error".to_string()
+                    },
+                };
+                future::ok(Response::new()
+                    .with_header(Server::new(self.server.to_string()))
+                    .with_header(StrictTransportSecurity::including_subdomains(self.sts))
+                    .with_status(StatusCode::InternalServerError)
+                    .with_header(ContentLength(body.len() as u64))
+                    .with_body(body))
+            }
+        }
+    }
+
+    fn admin_content(&self, req: Request, path: &Vec<String>) -> RouterFuture {
+        // TODO: implement JWT check and IP check
+        // Admin gets id from JWT https://github.com/Keats/jsonwebtoken
+        //    https://github.com/Keats/jsonwebtoken/blob/master/examples/custom_header.rs
+        // Generate it from http://search.cpan.org/~mik/Crypt-JWT-0.010/lib/Crypt/JWT.pm
+        //    And setup header https://alvinalexander.com/perl/edu/articles/pl010012
+        if let Some(auth) = req.headers().get::<header::Authorization<header::Bearer>>() {
+            match jwt::decode::<User>(&auth.token, self.jwt.as_ref(), &jwt::Validation::new(jwt::Algorithm::HS512)) {
+                Ok(user) => return self.protected_content(&req, user.claims.id, &path[0], &(path[1..].to_vec())),
+                Err(e) => print!("Error: {:?}\n", e),
+            }
+        }
+        future::ok(Response::new()
+            .with_header(Server::new(self.server.to_string()))
+            .with_status(StatusCode::Forbidden))
+    }
+
+    fn user_content(&self, req: Request, parent: &str, path: &Vec<String>) -> RouterFuture {
+        // User gets id from cookie
+        if let Some(c) = cookie::Cookie::from_request(&req, Some(cookie::CookiePrefix::HOST), "id") {
+            // Session cookie found (get ID)
+            // Valid session cookie so manage request
+            if let Ok(id) = c.get_value(Some(self.key)) {
+                 self.protected_content(&req, id, parent, path)
+            // Invalid session cookie; so clear out session cookie and redirect CAS login
+            } else {
+                if let Ok(c) = cookie::Cookie::new(Some(cookie::CookiePrefix::HOST), "id", "", Some(self.key)) {
+                    future::ok(self.cas.login_redirect(&self.service_url(&path)[..])
+                        .with_header(Server::new(self.server.to_string()))
+                        .with_header(StrictTransportSecurity::including_subdomains(self.sts))
+                        .with_header(
+                            hyper::header::SetCookie(vec![
+                                c.with_path(Some("/"))
+                                    .clear()
+                                    .with_secure(true)
+                                    .with_http_only(true)
+                                    .with_same_site(Some(cookie::SameSite::LAX))
+                                    .get_full_value()
+                            ])
+                        ))
+                // ERROR: Unable to create clear cookie
+                } else {
+                    let mut context = Context::new();
+                    context.add("error", &"Unable to clear session in attempt to retry login");
+                    let body = match self.templates.render("error.html", &context) {
+                        Ok(s) => s,
+                        Err(e) => {
+                            println!("Error: {}", e);
+                            for e in e.iter().skip(1) {
+                                println!("Reason: {}", e);
+                            }
+                            "error".to_string()
+                        },
+                    };
+                    future::ok(Response::new()
+                        .with_header(Server::new(self.server.to_string()))
+                        .with_header(StrictTransportSecurity::including_subdomains(self.sts))
+                        .with_status(StatusCode::InternalServerError)
+                        .with_header(ContentLength(body.len() as u64))
+                        .with_body(body))
+                }
+            }
+        } else {
+            // Session cookie was not found
+            match self.cas.verify_from_request(req.uri().query(), &self.service_url(&path)[..]) {
+                // If this was a redirect from CAS with token then verify and setup session cookie.
+                Ok(cas::ServiceResponse::Success(id)) => {
+                    // Add session cookie with id and redirect to original page
+                    // Do not include CAS ticket query
+                    if let Ok(c) = cookie::Cookie::new(Some(cookie::CookiePrefix::HOST), "id", &id[..], Some(self.key)) {
+                        let path_url = "/".to_string() + &*path.join("/");
+                        future::ok(Response::new()
+                            .with_header(Server::new(self.server.to_string()))
+                            .with_header(StrictTransportSecurity::including_subdomains(self.sts))
+                            .with_status(StatusCode::Found)
+                            .with_header(Location::new(path_url))
+                            .with_header(CacheControl(vec![CacheDirective::NoCache]))
+                            .with_header(
+                                hyper::header::SetCookie(vec![
+                                    c.with_path(Some("/"))
+                                        .with_secure(true)
+                                        .with_http_only(true)
+                                        .with_same_site(Some(cookie::SameSite::LAX))
+                                        .get_full_value()
+                                ])
+                            ))
+                    // ERROR: unable to set session
+                    } else {
+                        let mut context = Context::new();
+                        context.add("error", &"Unable to set session");
+                        let body = match self.templates.render("error.html", &context) {
+                            Ok(s) => s,
+                            Err(e) => {
+                                println!("Error: {}", e);
+                                for e in e.iter().skip(1) {
+                                    println!("Reason: {}", e);
+                                }
+                                "error".to_string()
+                            },
+                        };
+                        future::ok(Response::new()
+                            .with_header(Server::new(self.server.to_string()))
+                            .with_header(StrictTransportSecurity::including_subdomains(self.sts))
+                            .with_status(StatusCode::InternalServerError)
+                            .with_header(ContentLength(body.len() as u64))
+                            .with_body(body))
+                    }
+                },
+                // If not a redirect from CAS, or Ticket error, then redirect to CAS (Make sure not to run into infinite loop)
+                Ok(cas::ServiceResponse::Failure(e)) => {
+                    print!("[CAS VERIFY RESPONSE] {:?}\n", e);
+                    future::ok(self.cas.login_redirect(&self.service_url(&path)[..])
+                        .with_header(Server::new(self.server.to_string()))
+                        .with_header(StrictTransportSecurity::including_subdomains(self.sts))
+                    )
+                }
+                Err(e) => {
+                    print!("[CAS VERIFY RESPONSE] {:?}\n", e);
+                    future::ok(self.cas.login_redirect(&self.service_url(&path)[..])
+                        .with_header(Server::new(self.server.to_string()))
+                        .with_header(StrictTransportSecurity::including_subdomains(self.sts))
+                    )
+                }
+            }
+        }
     }
 }
 
@@ -186,19 +393,11 @@ impl<'a> Service for Router<'a> {
     fn call(&self, req: Request) -> Self::Future {
         //https://tokio-rs.github.io/tokio-middleware/src/tokio_middleware/log.rs.html
         //https://doc.rust-lang.org/log/env_logger/
-        print!("[REQUEST] {:?}\n", req);
+        print!("{:?}\n", req); // TODO: log resonse as well
         if let Ok(path) = normalize_req_path(req.path()) {
             let mut parent = "";
             if path.len() > 0 {
                 parent = &path[0][..];
-            }
-            let mut accept_json = false;
-            if let Some(accept) = req.headers().get::<header::Accept>() {
-                for a in &accept.0 {
-                    if *a == qitem(mime::APPLICATION_JSON) {
-                        accept_json = true;
-                    }
-                }
             }
             match (req.method(), parent) {
                 // Health checks.
@@ -219,9 +418,9 @@ impl<'a> Service for Router<'a> {
                 // CSS and image resource files
                 (&Get, "static") | (&Head, "static") | (&Get, "favicon.ico") | (&Head, "favicon.ico") => {
                     if parent == "favicon.ico" {
-                        self.manage_file(req, Response::new(), &vec!["static".to_string(), "images".to_string(), "favicon.ico".to_string()])
+                        self.manage_file(&req, Response::new(), &vec!["static".to_string(), "images".to_string(), "favicon.ico".to_string()])
                     } else {
-                        self.manage_file(req, Response::new(), &path)
+                        self.manage_file(&req, Response::new(), &path)
                     }
                 },
                 // Allow to logout without checking if logged in; so if a valid CAS user (authentication)
@@ -260,172 +459,11 @@ impl<'a> Service for Router<'a> {
                             .with_body(body))
                     }
                 },
-                // CAS infrastructure
-                // Route/Path were single page application will be accessed.
-                (&Get, "") | (&Get, "library") | (&Head, "library") | (&Delete, "library") => {
-                    if let Some(c) = cookie::Cookie::from_request(&req, Some(cookie::CookiePrefix::HOST), "id") {
-                        // Session cookie found (get ID)
-                        // Valid session cookie so manage request
-                        if let Ok(id) = c.get_value(Some(self.key)) {
-                            // File handler
-                            if parent == "library" {
-                                let mut path_files = path.clone();
-                                path_files.insert(0, id);
-                                path_files.insert(0, "vcms".to_string());
-                                self.manage_file(req, Response::new(), &path_files)
-                            } else {
-                                // UI/JSON handler
-                                if let Ok(media) = self.get_media(&id[..]) {
-                                    let body: String;
-                                    let mut res = Response::new()
-                                        .with_header(Server::new(self.server.to_string()))
-                                        .with_header(StrictTransportSecurity::including_subdomains(self.sts));
-                                    // JSON
-                                    if accept_json {
-                                        body = serde_json::to_string(&media).unwrap();
-                                        res = res.with_header(ContentType(mime::APPLICATION_JSON));
-                                    // Template
-                                    } else {
-                                        let mut context = Context::new();
-                                        context.add("media", &media);
-                                        body = match self.templates.render("index.html", &context) {
-                                            Ok(s) => s,
-                                            Err(e) => {
-                                                println!("Error: {}", e);
-                                                for e in e.iter().skip(1) {
-                                                    println!("Reason: {}", e);
-                                                }
-                                                "error".to_string()
-                                            },
-                                        };
-                                        res = res.with_header(ContentType(mime::TEXT_HTML_UTF_8));
-                                    }
-                                    future::ok(res.with_header(ContentLength(body.len() as u64))
-                                        .with_body(body))
-                                // User does not contain a directory structure such as <id>/library
-                                } else {
-                                    let mut context = Context::new();
-                                    context.add("error", &"Unable to find a media library");
-                                    let body = match self.templates.render("error.html", &context) {
-                                        Ok(s) => s,
-                                        Err(e) => {
-                                            println!("Error: {}", e);
-                                            for e in e.iter().skip(1) {
-                                                println!("Reason: {}", e);
-                                            }
-                                            "error".to_string()
-                                        },
-                                    };
-                                    future::ok(Response::new()
-                                        .with_header(Server::new(self.server.to_string()))
-                                        .with_header(StrictTransportSecurity::including_subdomains(self.sts))
-                                        .with_status(StatusCode::InternalServerError)
-                                        .with_header(ContentLength(body.len() as u64))
-                                        .with_body(body))
-                                }
-                            }
-                        // Invalid session cookie; so clear out session cookie and redirect CAS login
-                        } else {
-                            if let Ok(c) = cookie::Cookie::new(Some(cookie::CookiePrefix::HOST), "id", "", Some(self.key)) {
-                                future::ok(self.cas.login_redirect(&self.service_url(&path)[..])
-                                    .with_header(Server::new(self.server.to_string()))
-                                    .with_header(StrictTransportSecurity::including_subdomains(self.sts))
-                                    .with_header(
-                                        hyper::header::SetCookie(vec![
-                                            c.with_path(Some("/"))
-                                                .clear()
-                                                .with_secure(true)
-                                                .with_http_only(true)
-                                                .with_same_site(Some(cookie::SameSite::LAX))
-                                                .get_full_value()
-                                        ])
-                                    ))
-                            // ERROR: Unable to create clear cookie
-                            } else {
-                                let mut context = Context::new();
-                                context.add("error", &"Unable to clear session in attempt to retry login");
-                                let body = match self.templates.render("error.html", &context) {
-                                    Ok(s) => s,
-                                    Err(e) => {
-                                        println!("Error: {}", e);
-                                        for e in e.iter().skip(1) {
-                                            println!("Reason: {}", e);
-                                        }
-                                        "error".to_string()
-                                    },
-                                };
-                                future::ok(Response::new()
-                                    .with_header(Server::new(self.server.to_string()))
-                                    .with_header(StrictTransportSecurity::including_subdomains(self.sts))
-                                    .with_status(StatusCode::InternalServerError)
-                                    .with_header(ContentLength(body.len() as u64))
-                                    .with_body(body))
-                            }
-                        }
-                    } else {
-                        // Session cookie was not found
-                        match self.cas.verify_from_request(req.uri().query(), &self.service_url(&path)[..]) {
-                            // If this was a redirect from CAS with token then verify and setup session cookie.
-                            Ok(cas::ServiceResponse::Success(id)) => {
-                                // Add session cookie with id and redirect to original page
-                                // Do not include CAS ticket query
-                                if let Ok(c) = cookie::Cookie::new(Some(cookie::CookiePrefix::HOST), "id", &id[..], Some(self.key)) {
-                                    let path_url = "/".to_string() + &*path.join("/");
-                                    future::ok(Response::new()
-                                        .with_header(Server::new(self.server.to_string()))
-                                        .with_header(StrictTransportSecurity::including_subdomains(self.sts))
-                                        .with_status(StatusCode::Found)
-                                        .with_header(Location::new(path_url))
-                                        .with_header(CacheControl(vec![CacheDirective::NoCache]))
-                                        .with_header(
-                                            hyper::header::SetCookie(vec![
-                                                c.with_path(Some("/"))
-                                                    .with_secure(true)
-                                                    .with_http_only(true)
-                                                    .with_same_site(Some(cookie::SameSite::LAX))
-                                                    .get_full_value()
-                                            ])
-                                        ))
-                                // ERROR: unable to set session
-                                } else {
-                                    let mut context = Context::new();
-                                    context.add("error", &"Unable to set session");
-                                    let body = match self.templates.render("error.html", &context) {
-                                        Ok(s) => s,
-                                        Err(e) => {
-                                            println!("Error: {}", e);
-                                            for e in e.iter().skip(1) {
-                                                println!("Reason: {}", e);
-                                            }
-                                            "error".to_string()
-                                        },
-                                    };
-                                    future::ok(Response::new()
-                                        .with_header(Server::new(self.server.to_string()))
-                                        .with_header(StrictTransportSecurity::including_subdomains(self.sts))
-                                        .with_status(StatusCode::InternalServerError)
-                                        .with_header(ContentLength(body.len() as u64))
-                                        .with_body(body))
-                                }
-                            },
-                            // If not a redirect from CAS, or Ticket error, then redirect to CAS (Make sure not to run into infinite loop)
-                            Ok(cas::ServiceResponse::Failure(e)) => {
-                                print!("[CAS VERIFY RESPONSE] {:?}\n", e);
-                                future::ok(self.cas.login_redirect(&self.service_url(&path)[..])
-                                    .with_header(Server::new(self.server.to_string()))
-                                    .with_header(StrictTransportSecurity::including_subdomains(self.sts))
-                                )
-                            }
-                            Err(e) => {
-                                print!("[CAS VERIFY RESPONSE] {:?}\n", e);
-                                future::ok(self.cas.login_redirect(&self.service_url(&path)[..])
-                                    .with_header(Server::new(self.server.to_string()))
-                                    .with_header(StrictTransportSecurity::including_subdomains(self.sts))
-                                )
-                            }
-                        }
-                    }
-                },
+                // The following Route/Path of single page application may only be accessed via
+                //   an authenticated netid from CAS infrastructure or authorization signature via Whiskers admin tool.
+                (&Get, "") | (&Get, "library") | (&Head, "library") | (&Delete, "library") => self.user_content(req, parent, &path),
+                // Admin JWT Requests
+                (&Get, "admin") | (&Delete, "admin") => self.admin_content(req, &path),
                 // Generally CAS server announcements of SSO logouts
                 (&Post, _) => {
                    print!("[REQUEST] {:?}", req);

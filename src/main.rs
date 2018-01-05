@@ -10,6 +10,7 @@ extern crate tokio_proto;
 extern crate tokio_rustls;
 extern crate hyper_rustls;
 extern crate hyper_openssl;
+extern crate jsonwebtoken as jwt;
 extern crate ring;
 extern crate base64;
 extern crate percent_encoding;
@@ -74,6 +75,24 @@ lazy_static! {
            Err(_) => Key::new(None).unwrap(),
         }
     };
+}
+
+// ```openssl rand -base64 32```
+// example: JWTKEY=95C/LUVqguoqHsVz4ATVm6yhJczhp5/zxoJVHr3eagw=
+lazy_static! {
+    static ref JWT_KEY: Vec<u8> = {
+        match env::var("JWTKEY") {
+           Ok(jwt_key) => {
+               if let Ok(k) = base64::decode(&jwt_key) {
+                   k
+               } else {
+                   panic!("Invalid JWTKEY Base64 encoding.");
+               }
+           },
+           Err(_) => panic!("No JWTKEY defined."),
+        }
+    };
+
 }
 
 // example: DOMAIN=https://mediadepot-qa1.its.txstate.edu:8443
@@ -143,12 +162,11 @@ fn main() {
     let http = std::rc::Rc::new(Http::new());
     let done = socket.incoming()
         .for_each(|(sock, remote_addr)| {
-            println!("Info: {:?}", remote_addr);
             let h = handle.clone();
             let http = http.clone();
             let done = arc_config.accept_async(sock)
                 .map(move |stream| {
-                    let r = Router::new(h.clone(), &*ROOT_DIR, &COOKIE_KEY, &DOMAIN, &SERVER, *STS, &CAS_CLIENT, &TEMPLATES);
+                    let r = Router::new(h.clone(), &*ROOT_DIR, &JWT_KEY, &COOKIE_KEY, &DOMAIN, &SERVER, *STS, &CAS_CLIENT, &TEMPLATES);
                     http.bind_connection(&h, stream, remote_addr, r);
                 })
                 .map_err(move |err| println!("Error: {:?} - {}", err, remote_addr));

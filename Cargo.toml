@@ -29,4 +29,5 @@ time = "0.1"
 tera = "^0.10.10"
 error-chain = "0.10"
 # keep the following in sync with rustls
+jsonwebtoken = "4.0.0"
 ring  = "0.12.1"
