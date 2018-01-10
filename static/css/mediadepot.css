@@ -6,6 +6,9 @@ body {
 .main-content {
     flex: 1;
 }
+.navbar {
+    flex-wrap: nowrap;
+}
 .youstar-logo {
     max-height: 5rem;
 }
@@ -18,6 +21,9 @@ padding: 0.75rem 2rem;
 .btn-logout:hover {
 background-color: #1D4D99;
 border-color: #173c77;
+}
+.logout-text {
+    margin-right: 10px;
 }
 .no-content, .error {
     font-size: 1.5rem;
@@ -96,5 +102,31 @@ footer {
         display: flex;
         justify-content: space-between;
         font-size: 80%;
+    }
+}
+@media (max-width: 576px) {
+    .navbar {
+        padding: 0.5rem 0;
+    }
+    .navbar-brand {
+        margin-right: 0;
+    }
+    .btn-logout {
+        padding: 0.5rem 0.5rem 0.5rem 0.7rem;
+    }
+    .btn-logout i {
+        font-size: 1.5rem;
+    }
+    .logout-text {
+        display: none;
+    }
+}
+@media (max-width: 380px) {
+    .youstar-logo {
+        width:85%;
+        height: auto;
+    }
+    .btn-logout i {
+        font-size: 1.2rem;
     }
 }
