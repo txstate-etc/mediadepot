@@ -133,7 +133,7 @@ impl CasClient {
         let uri = (self.verify_url.to_string()
            + "?ticket=" + &(utf8_percent_encode(ticket, DEFAULT_ENCODE_SET).to_string())[..]
            + "&service=" + &(utf8_percent_encode(service_url, DEFAULT_ENCODE_SET).to_string()[..])).parse::<Uri>()?;
-        print!("[SERVICE URL]{:?}\n", uri);
+        print!("[SERVICE URL] {:?}\n", uri);
         let mut core = Core::new()?;
         let client = Client::configure()
             .connector(HttpsConnector::new(4, &core.handle())?)

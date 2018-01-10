@@ -1,3 +1,4 @@
+#![feature(nll)]
 #[macro_use] extern crate serde_derive;
 #[macro_use] extern crate lazy_static;
 #[macro_use] extern crate tera;
@@ -22,6 +23,7 @@ extern crate serde;
 extern crate serde_json;
 extern crate time;
 
+mod context;
 mod key;
 mod cookie;
 mod cas;

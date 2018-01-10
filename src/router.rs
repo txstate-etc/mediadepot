@@ -9,16 +9,19 @@ use percent_encoding::{percent_decode, utf8_percent_encode, DEFAULT_ENCODE_SET};
 use std::fs;
 use serde_json;
 use chrono::prelude::{DateTime, Local};
-use tera::{Tera, Context};
+use tera;
 use cookie;
 use cas;
 use files;
 use jwt;
+use context::Context;
 
 // Basic utilities
 
+// Used for proctor access on behalf of id
 #[derive(Debug, Deserialize)]
 struct User {
+    proctor: String,
     id: String,
     //exp: time,
 }
@@ -138,7 +141,7 @@ pub struct Router<'a> {
     server: &'a str,
     sts: u64,
     cas: &'a cas::CasClient,
-    templates: &'a Tera,
+    templates: &'a tera::Tera,
 }
 
 impl<'a> Router<'a> {
@@ -150,7 +153,7 @@ impl<'a> Router<'a> {
         server: &'a str,
         sts: u64,
         cas_client: &'a cas::CasClient,
-        templates: &'a Tera) -> Router<'a> {
+        templates: &'a tera::Tera) -> Router<'a> {
         Router{
             handle: handle,
             dir_www: dir_www,
@@ -174,19 +177,29 @@ impl<'a> Router<'a> {
         ).to_string()
     }
 
-    // If path is to student directory insert id in path vector
-    fn manage_file(&self, req: &Request, res: Response, path: &Vec<String>) -> RouterFuture {
+    // If path is to library directory with media files insert vcms/<id> as part of path vector
+    fn serve_library_file(&self, context: Context, res: Response, path: &Vec<String>) -> RouterFuture {
+        let mut path = path.clone();
+        path.insert(0, context.id.as_ref().unwrap().clone());
+        path.insert(0, "vcms".to_string());
+        self.serve_file(context, res, &path)
+    }
+
+    fn serve_file(&self, mut context: Context, res: Response, path: &Vec<String>) -> RouterFuture {
         let path = self.dir_www.to_string() + "/" + &*path.join("/");
-        let modified = if let Some(&header::IfModifiedSince(ref value)) = req.headers().get() {
-            Some(value)
+        let modified = if let Some(&header::IfModifiedSince(ref value)) = context.req.headers().get() {
+            Some(value.clone())
         } else {
             None
         };
-        match req.method() {
-            &Method::Head => files::serve(self.handle.clone(), true, modified, &*path, res),
-            &Method::Get => files::serve(self.handle.clone(), false, modified, &*path, res),
-            &Method::Delete => future::ok(res.with_status(StatusCode::MethodNotAllowed)),
-            _ => future::ok(res.with_status(StatusCode::MethodNotAllowed)),
+        match context.req.method() {
+            &Method::Head | &Method::Get => files::serve(context, self.handle.clone(), modified, &*path, res),
+            //&Method::Delete => future::ok(res.with_status(StatusCode::MethodNotAllowed)),
+            _ => {
+                context.status_code = StatusCode::MethodNotAllowed;
+                print!("{:?}, ERROR: Invalid request method.\n", context);
+                future::ok(res.with_status(StatusCode::MethodNotAllowed))
+            },
         }
     }
 
@@ -195,29 +208,27 @@ impl<'a> Router<'a> {
         media(&root[..], "library")
     }
 
-    fn protected_content(&self, req: &Request, id: String, parent: &str, path: &Vec<String>) -> RouterFuture {
+    // Id should be set
+    fn protected_content(&self, mut context: Context, parent: &str, path: &Vec<String>) -> RouterFuture {
         // File handler
         if parent == "library" {
-            let mut path_files = path.clone();
-            path_files.insert(0, id);
-            path_files.insert(0, "vcms".to_string());
-            self.manage_file(&req, Response::new(), &path_files)
+            self.serve_library_file(context, Response::new(), &path)
         } else {
             // UI/JSON handler
-            if let Ok(media) = self.get_media(&id[..]) {
+            if let Ok(media) = self.get_media(&context.id.as_ref().unwrap()[..]) {
                 let body: String;
                 let mut res = Response::new()
                     .with_header(Server::new(self.server.to_string()))
                     .with_header(StrictTransportSecurity::including_subdomains(self.sts));
                 // JSON
-                if with_mime(&req, mime::APPLICATION_JSON) {
+                if with_mime(&context.req, mime::APPLICATION_JSON) {
                     body = serde_json::to_string(&media).unwrap();
                     res = res.with_header(ContentType(mime::APPLICATION_JSON));
                 // Template
                 } else {
-                    let mut context = Context::new();
-                    context.add("media", &media);
-                    body = match self.templates.render("index.html", &context) {
+                    let mut tera_context = tera::Context::new();
+                    tera_context.add("media", &media);
+                    body = match self.templates.render("index.html", &tera_context) {
                         Ok(s) => s,
                         Err(e) => {
                             println!("Error: {}", e);
@@ -229,13 +240,16 @@ impl<'a> Router<'a> {
                     };
                     res = res.with_header(ContentType(mime::TEXT_HTML_UTF_8));
                 }
+                print!("{:?}\n", context);
                 future::ok(res.with_header(ContentLength(body.len() as u64))
                     .with_body(body))
             // User does not contain a directory structure such as <id>/library
             } else {
-                let mut context = Context::new();
-                context.add("error", &"Unable to find a media library");
-                let body = match self.templates.render("error.html", &context) {
+                context.status_code = StatusCode::InternalServerError;
+                print!("{:?}, ERROR: No library directory for user.\n", context);
+                let mut tera_context = tera::Context::new();
+                tera_context.add("error", &"Unable to find a media library");
+                let body = match self.templates.render("error.html", &tera_context) {
                     Ok(s) => s,
                     Err(e) => {
                         println!("Error: {}", e);
@@ -255,16 +269,27 @@ impl<'a> Router<'a> {
         }
     }
 
-    fn admin_content(&self, req: Request, path: &Vec<String>) -> RouterFuture {
+    fn admin_content(&self, mut context: Context, parent: &str, path: &Vec<String>) -> RouterFuture {
         // TODO: implement JWT check and IP check
         // Admin gets id from JWT https://github.com/Keats/jsonwebtoken
         //    https://github.com/Keats/jsonwebtoken/blob/master/examples/custom_header.rs
         // Generate it from http://search.cpan.org/~mik/Crypt-JWT-0.010/lib/Crypt/JWT.pm
         //    And setup header https://alvinalexander.com/perl/edu/articles/pl010012
-        if let Some(auth) = req.headers().get::<header::Authorization<header::Bearer>>() {
+        let mut auth = None;
+        if let Some(some_auth) = context.req.headers().get::<header::Authorization<header::Bearer>>() {
+            auth = Some(some_auth.clone())
+        }
+        if let Some(auth) = auth {
             match jwt::decode::<User>(&auth.token, self.jwt.as_ref(), &jwt::Validation::new(jwt::Algorithm::HS512)) {
-                Ok(user) => return self.protected_content(&req, user.claims.id, &path[0], &(path[1..].to_vec())),
-                Err(e) => print!("Error: {:?}\n", e),
+                Ok(user) => {
+                    context.proctor = Some(user.claims.proctor);
+                    context.id = Some(user.claims.id);
+                    return self.protected_content(context, parent, path);
+                },
+                Err(e) => {
+                    context.status_code = StatusCode::Forbidden;
+                    print!("{:?}, ERROR: {:?}\n", context, e);
+                },
             }
         }
         future::ok(Response::new()
@@ -272,16 +297,19 @@ impl<'a> Router<'a> {
             .with_status(StatusCode::Forbidden))
     }
 
-    fn user_content(&self, req: Request, parent: &str, path: &Vec<String>) -> RouterFuture {
+    fn user_content(&self, mut context: Context, parent: &str, path: &Vec<String>) -> RouterFuture {
         // User gets id from cookie
-        if let Some(c) = cookie::Cookie::from_request(&req, Some(cookie::CookiePrefix::HOST), "id") {
+        if let Some(c) = cookie::Cookie::from_request(&context.req, Some(cookie::CookiePrefix::HOST), "id") {
             // Session cookie found (get ID)
             // Valid session cookie so manage request
             if let Ok(id) = c.get_value(Some(self.key)) {
-                 self.protected_content(&req, id, parent, path)
+                 context.id = Some(id);
+                 self.protected_content(context, parent, path)
             // Invalid session cookie; so clear out session cookie and redirect CAS login
             } else {
                 if let Ok(c) = cookie::Cookie::new(Some(cookie::CookiePrefix::HOST), "id", "", Some(self.key)) {
+                    context.status_code = StatusCode::Found;
+                    print!("{:?}, ERROR: Invalid session cookie.\n", context);
                     future::ok(self.cas.login_redirect(&self.service_url(&path)[..])
                         .with_header(Server::new(self.server.to_string()))
                         .with_header(StrictTransportSecurity::including_subdomains(self.sts))
@@ -297,9 +325,11 @@ impl<'a> Router<'a> {
                         ))
                 // ERROR: Unable to create clear cookie
                 } else {
-                    let mut context = Context::new();
-                    context.add("error", &"Unable to clear session in attempt to retry login");
-                    let body = match self.templates.render("error.html", &context) {
+                    context.status_code = StatusCode::InternalServerError;
+                    print!("{:?}, ERROR: Unable to create clear cookie.\n", context);
+                    let mut tera_context = tera::Context::new();
+                    tera_context.add("error", &"Unable to clear session in attempt to retry login");
+                    let body = match self.templates.render("error.html", &tera_context) {
                         Ok(s) => s,
                         Err(e) => {
                             println!("Error: {}", e);
@@ -319,12 +349,15 @@ impl<'a> Router<'a> {
             }
         } else {
             // Session cookie was not found
-            match self.cas.verify_from_request(req.uri().query(), &self.service_url(&path)[..]) {
+            match self.cas.verify_from_request(context.req.uri().query(), &self.service_url(&path)[..]) {
                 // If this was a redirect from CAS with token then verify and setup session cookie.
                 Ok(cas::ServiceResponse::Success(id)) => {
+                    context.id = Some(id);
                     // Add session cookie with id and redirect to original page
                     // Do not include CAS ticket query
-                    if let Ok(c) = cookie::Cookie::new(Some(cookie::CookiePrefix::HOST), "id", &id[..], Some(self.key)) {
+                    if let Ok(c) = cookie::Cookie::new(Some(cookie::CookiePrefix::HOST), "id", &(context.id.as_ref().unwrap())[..], Some(self.key)) {
+                        context.status_code = StatusCode::Found;
+                        print!("{:?}, Success: Redirect CAS redirect to original page.\n", context);
                         let path_url = "/".to_string() + &*path.join("/");
                         future::ok(Response::new()
                             .with_header(Server::new(self.server.to_string()))
@@ -343,9 +376,11 @@ impl<'a> Router<'a> {
                             ))
                     // ERROR: unable to set session
                     } else {
-                        let mut context = Context::new();
-                        context.add("error", &"Unable to set session");
-                        let body = match self.templates.render("error.html", &context) {
+                        context.status_code = StatusCode::InternalServerError;
+                        print!("{:?}, ERROR: Unable to set session.\n", context);
+                        let mut tera_context = tera::Context::new();
+                        tera_context.add("error", &"Unable to set session");
+                        let body = match self.templates.render("error.html", &tera_context) {
                             Ok(s) => s,
                             Err(e) => {
                                 println!("Error: {}", e);
@@ -365,14 +400,16 @@ impl<'a> Router<'a> {
                 },
                 // If not a redirect from CAS, or Ticket error, then redirect to CAS (Make sure not to run into infinite loop)
                 Ok(cas::ServiceResponse::Failure(e)) => {
-                    print!("[CAS VERIFY RESPONSE] {:?}\n", e);
+                    context.status_code = StatusCode::Found;
+                    print!("{:?}, CAS: {:?}\n", context, e);
                     future::ok(self.cas.login_redirect(&self.service_url(&path)[..])
                         .with_header(Server::new(self.server.to_string()))
                         .with_header(StrictTransportSecurity::including_subdomains(self.sts))
                     )
                 }
                 Err(e) => {
-                    print!("[CAS VERIFY RESPONSE] {:?}\n", e);
+                    context.status_code = StatusCode::Found;
+                    print!("{:?}, CAS: {:?}\n", context, e);
                     future::ok(self.cas.login_redirect(&self.service_url(&path)[..])
                         .with_header(Server::new(self.server.to_string()))
                         .with_header(StrictTransportSecurity::including_subdomains(self.sts))
@@ -393,24 +430,30 @@ impl<'a> Service for Router<'a> {
     fn call(&self, req: Request) -> Self::Future {
         //https://tokio-rs.github.io/tokio-middleware/src/tokio_middleware/log.rs.html
         //https://doc.rust-lang.org/log/env_logger/
-        print!("{:?}\n", req); // TODO: log resonse as well
-        if let Ok(path) = normalize_req_path(req.path()) {
+        let mut context = Context{
+            proctor: None,
+            id: None,
+            status_code: StatusCode::Ok,
+            req: req,
+        };
+        if let Ok(path) = normalize_req_path(context.req.path()) {
             let mut parent = "";
             if path.len() > 0 {
                 parent = &path[0][..];
             }
-            match (req.method(), parent) {
+            match (context.req.method(), parent) {
                 // Health checks.
                 //   TODO: Verify vcms directory with faculty and student video files may be accessible
                 //   TODO: Return back total number of files served and currently serving.
                 (&Get, "health") | (&Head, "health") => {
+                    print!("{:?}\n", context);
                     let body: &'static [u8] = b"Up";
                     let mut res = Response::new()
                         .with_header(Server::new(self.server.to_string()))
                         .with_header(StrictTransportSecurity::including_subdomains(self.sts))
                         .with_header(ContentType(mime::TEXT_PLAIN))
                         .with_header(ContentLength(body.len() as u64));
-                    if req.method() == &Get { 
+                    if context.req.method() == &Get { 
                         res.set_body(body);
                     }
                     future::ok(res)
@@ -418,15 +461,17 @@ impl<'a> Service for Router<'a> {
                 // CSS and image resource files
                 (&Get, "static") | (&Head, "static") | (&Get, "favicon.ico") | (&Head, "favicon.ico") => {
                     if parent == "favicon.ico" {
-                        self.manage_file(&req, Response::new(), &vec!["static".to_string(), "images".to_string(), "favicon.ico".to_string()])
+                        self.serve_file(context, Response::new(), &vec!["static".to_string(), "images".to_string(), "favicon.ico".to_string()])
                     } else {
-                        self.manage_file(&req, Response::new(), &path)
+                        self.serve_file(context, Response::new(), &path)
                     }
                 },
                 // Allow to logout without checking if logged in; so if a valid CAS user (authentication)
                 // does NOT have access (authorization) to access any routes, the user can still log out.
                 (&Get, "logout") => {
                     if let Ok(c) = cookie::Cookie::new(Some(cookie::CookiePrefix::HOST), "id", "", Some(self.key)) {
+                        context.status_code = StatusCode::Found;
+                        print!("{:?}\n", context);
                         future::ok(self.cas.logout_redirect(&self.service_url(&vec!["/".to_string()]))
                             .with_header(Server::new(self.server.to_string()))
                             .with_header(StrictTransportSecurity::including_subdomains(self.sts))
@@ -441,9 +486,11 @@ impl<'a> Service for Router<'a> {
                                 ])
                             ))
                     } else {
-                        let mut context = Context::new();
-                        context.add("error", &"Unable to clear session");
-                        let body = match self.templates.render("error.html", &context) {
+                        context.status_code = StatusCode::InternalServerError;
+                        print!("{:?}\n", context);
+                        let mut tera_context = tera::Context::new();
+                        tera_context.add("error", &"Unable to clear session");
+                        let body = match self.templates.render("error.html", &tera_context) {
                             Ok(s) => s,
                             Err(e) => {
                                 println!("Error: {}", e);
@@ -461,21 +508,35 @@ impl<'a> Service for Router<'a> {
                 },
                 // The following Route/Path of single page application may only be accessed via
                 //   an authenticated netid from CAS infrastructure or authorization signature via Whiskers admin tool.
-                (&Get, "") | (&Get, "library") | (&Head, "library") | (&Delete, "library") => self.user_content(req, parent, &path),
+                (&Get, "") | (&Get, "library") | (&Head, "library") | (&Delete, "library") => self.user_content(context, parent, &path),
                 // Admin JWT Requests
-                (&Get, "admin") | (&Delete, "admin") => self.admin_content(req, &path),
+                (&Get, "admin") | (&Head, "admin") | (&Delete, "admin") => {
+                    let mut parent = "".to_string();
+                    let mut sub_path = Vec::new();
+                    if path.len() > 1 {
+                        parent = path[1].clone();
+                        sub_path = path[1..].to_vec();
+                    }
+                    self.admin_content(context, &parent[..], &sub_path)
+                },
                 // Generally CAS server announcements of SSO logouts
                 (&Post, _) => {
-                   print!("[REQUEST] {:?}", req);
-                   future::ok(Response::new())
+                    print!("{:?}\n", context);
+                    future::ok(Response::new())
                 },
-                _ => future::ok(Response::new()
+                _ => {
+                    context.status_code = StatusCode::NotFound;
+                    print!("{:?}\n", context);
+                    future::ok(Response::new()
                          .with_status(StatusCode::NotFound)
                          .with_header(Server::new(self.server.to_string()))
                          .with_header(StrictTransportSecurity::including_subdomains(self.sts))
-                     ),
+                    )
+                },
             }
         } else {
+            context.status_code = StatusCode::NotFound;
+            print!("{:?}\n", context);
             future::ok(Response::new()
                 .with_status(StatusCode::NotFound)
                 .with_header(Server::new(self.server.to_string()))

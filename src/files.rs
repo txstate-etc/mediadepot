@@ -4,11 +4,12 @@ use std::time;
 use futures::{Future, Stream, Sink, Poll, Async, future};
 use futures::sync::mpsc::SendError;
 use hyper;
-use hyper::{Chunk, StatusCode, Body, header};
+use hyper::{Chunk, Method, StatusCode, Body, header};
 use hyper::server::Response;
 use tokio_core::reactor::Handle;
 use mime;
 use mime_guess;
+use context::Context;
 
 /// A stream that produces Hyper chunks from a file.
 struct FileChunkStream(File);
@@ -65,35 +66,62 @@ fn get_filename_ext(path: &str) -> Option<(&str, &str)> {
 ///
 /// If an IO error occurs whilst attempting to serve a file, `hyper::Error(Io)` will be returned.
 /// path should already be normalized via normalize_req_path function
-pub fn serve(handle: Handle, method_head: bool, modified_req: Option<&header::HttpDate>, path: &str, res: Response) -> future::FutureResult<hyper::Response, hyper::Error> {
+pub fn serve(mut context: Context, handle: Handle, modified_req: Option<header::HttpDate>, path: &str, res: Response) -> future::FutureResult<hyper::Response, hyper::Error> {
     // Do not return directory structures.
     if path.len() == 0 {
+        context.status_code = StatusCode::NotFound;
+        print!("{:?}, ERROR: Empty path.\n", context);
         return future::ok(res.with_status(StatusCode::Forbidden))
     }
+
+    let method_head = match context.req.method() {
+        &Method::Head => true,
+        _ => false,
+    };
 
     let metadata = match fs::metadata(path) {
         Ok(meta) => meta,
         Err(e) => {
             return match e.kind() {
-                IoErrorKind::NotFound => future::ok(res.with_status(StatusCode::NotFound)),
-                IoErrorKind::PermissionDenied => future::ok(res.with_status(StatusCode::Forbidden)),
-                _ => future::err(hyper::Error::Io(e)),
+                IoErrorKind::NotFound => {
+                    context.status_code = StatusCode::NotFound;
+                    print!("{:?}, ERROR: '{}' File not found.\n", context, path);
+                    future::ok(res.with_status(StatusCode::NotFound))
+                },
+                IoErrorKind::PermissionDenied => {
+                    context.status_code = StatusCode::Forbidden;
+                    print!("{:?}, ERROR: '{}' File Permission Denied.\n", context, path);
+                    future::ok(res.with_status(StatusCode::Forbidden))
+                },
+                _ => {
+                    context.status_code = StatusCode::InternalServerError;
+                    print!("{:?}, ERROR: '{}' File access internal server error. Connection dropped. -- {:?}\n", context, path, e);
+                    future::err(hyper::Error::Io(e))
+                },
             };
         },
     };
     if !metadata.is_file() {
+        context.status_code = StatusCode::NotFound;
+        print!("{:?}, ERROR: '{}' File not found.\n", context, path);
         return future::ok(res.with_status(StatusCode::NotFound));
     }
 
     // Check If-Modified-Since header.
     let modified = match metadata.modified() {
         Ok(time) => time,
-        Err(err) => return future::err(hyper::Error::Io(err)),
+        Err(e) => {
+            context.status_code = StatusCode::InternalServerError;
+            print!("{:?}, ERROR: Time based internal server error. Connection dropped. -- {:?}\n", context, e);
+            return future::err(hyper::Error::Io(e))
+        },
     };
 
     let modified_http = header::HttpDate::from(modified);
     if let Some(http_date) = modified_req {
-        if modified_http <= *http_date {
+        if modified_http <= http_date {
+            context.status_code = StatusCode::NotModified;
+            print!("{:?}, ERROR: '{}' File not modified.\n", context, path);
             return future::ok(res.with_status(StatusCode::NotModified));
         }
     }
@@ -127,7 +155,11 @@ pub fn serve(handle: Handle, method_head: bool, modified_req: Option<&header::Ht
    } else {
         let file = match File::open(path) {
             Ok(file) => file,
-            Err(err) => return future::err(hyper::Error::Io(err)),
+            Err(e) => {
+                context.status_code = StatusCode::InternalServerError;
+                print!("{:?}, ERROR: '{}' Open file internal server error. Connection dropped. -- {:?}\n", context, path, e);
+                return future::err(hyper::Error::Io(e));
+            },
         };
         let (sender, body) = Body::pair();
         handle.spawn(
@@ -137,6 +169,6 @@ pub fn serve(handle: Handle, method_head: bool, modified_req: Option<&header::Ht
         );
         res.set_body(body);
     }
-
+    print!("{:?}\n", context);
     future::ok(res)
 }
