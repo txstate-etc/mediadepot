@@ -40,6 +40,9 @@ border-color: #173c77;
 .download-link {
     color: #235EBA;
 }
+.download-link span {
+    margin-right: 5px;
+}
 .action-links {
     display: none;
 }

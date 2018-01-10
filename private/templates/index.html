@@ -41,7 +41,9 @@
                 <td><div class="carded-label">Created:</div>{{ e.date | date(format="%b %e, %Y")}}</td>
                 <td><div class="carded-label">Available Until:</div>{{ e.date | dateadd(days=21) | date(format="%b %e, %Y")}}</td>
                 <td>
-                    <a class="download-link" href="{{ e.path }}">Download</a>
+                    <a class="download-link" href="{{ e.path }}">
+                        <span>Download</span><i class="fa fa-cloud-download" aria-hidden="true"></i>
+                    </a>
                 </td>
             </tr>
             {% endfor %}
