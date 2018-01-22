@@ -30,9 +30,6 @@ A hyper based server with CAS authentication that allows the user to download th
 
 ## docker examples:
 ```
-docker build --target deploy -t ${TXSTATE_REGISTRY}/mediadepot:0.1.1 .
-docker run --rm --env-file ~+/www/env.txt --read-only -v ~+/www:/var/lib/www:ro -p 127.0.0.1:8443:8443 --name mediadepot ${TXSTATE_REGISTRY}/mediadepot:0.1.1
+docker build --target deploy -t ${TXSTATE_REGISTRY}/mediadepot:1.0.0 .
+docker run --rm --env-file ~+/www/env.txt --read-only -v ~+/www:/var/lib/www:ro -p 127.0.0.1:8443:8443 --name mediadepot ${TXSTATE_REGISTRY}/mediadepot:1.0.0
 ```
-
-## TODOs:
-* Design templates to fill in with user content.
