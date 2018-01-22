@@ -26,16 +26,20 @@ struct User {
     //exp: time,
 }
 
-#[derive(Serialize, Debug)]
+// Fields are ordered in relevance to sort
+#[derive(Serialize, PartialEq, PartialOrd, Eq, Ord, Debug)]
 struct Media {
+    //#[serde(skip_serializing)]
+    //timestamp: String, //YYYY-mm-dd HH:MM:SS
+    date: String, //YYYY-mm-dd 
     name: String,
-    path: String,
-    date: String,
     size: u64,
+    path: String,
     //thumbnails: Vec<String>,
 }
 
 // Generate a list of media files and their attributes for path under root
+// return sorted in order of fields.
 fn media(root: &str, path: &str) -> Result<Vec<Media>, &'static str> {
     let base = root.to_string() + "/" + path;
     let metadata = fs::metadata(&*base).map_err(|_| "Unable to stat file or directory")?;
@@ -54,8 +58,10 @@ fn media(root: &str, path: &str) -> Result<Vec<Media>, &'static str> {
                                         let dt = DateTime::<Local>::from(modified);
                                         media.push(Media{
                                             path: path.to_string() + "/" + &filename[..],
+                                            //timestamp: dt.format("%Y-%m-%d %H:%M:%S").to_string(),
+                                            //date: dt.format("%Y-%m-%d").to_string(),
+                                            date: dt.format("%Y-%m-%d %H:%M:%S").to_string(),
                                             name: filename,
-                                            date: dt.format("%Y-%m-%d").to_string(),
                                             size: metadata.len(),
                                         });
                                     }
@@ -64,6 +70,8 @@ fn media(root: &str, path: &str) -> Result<Vec<Media>, &'static str> {
                         }
                     }
                 }
+                media.sort();
+                media.reverse();
                 Ok(media)
             },
         }
