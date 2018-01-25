@@ -33,3 +33,8 @@ A hyper based server with CAS authentication that allows the user to download th
 docker build --target deploy -t ${TXSTATE_REGISTRY}/mediadepot:1.0.0 .
 docker run --rm --env-file ~+/www/env.txt --read-only -v ~+/www:/var/lib/www:ro -p 127.0.0.1:8443:8443 --name mediadepot ${TXSTATE_REGISTRY}/mediadepot:1.0.0
 ```
+
+## Possible future design ideas
+
+### Trash implementation:
+The option to manage a trash directory has come up a few times. Currently a cron job runs at night that clears out older media after a few weeks. A simple way to implement this feature is to have the template filter/hide the files that extend past the client's public "purge" date. The admin interface that request the json feed will still send the full list of available files and thus all existing files may be accessible through the admin UI. The client UI that is managed via the template will not show the publicly "purged" files. This can be implemented with a simple if block in the template. We can then extend the private purge date a week; so we have a buffer from which the remote admin interface can still have access to them before they are actually deleted.
