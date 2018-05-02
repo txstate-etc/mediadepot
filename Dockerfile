@@ -1,4 +1,4 @@
-FROM clux/muslrust AS builder
+FROM clux/muslrust:nightly AS builder
 
 COPY . /root/
 WORKDIR /root/

@@ -161,7 +161,9 @@ fn main() {
     let mut core = Core::new().unwrap();
     let handle = core.handle();
     let socket = TcpListener::bind(&addr, &handle).unwrap();
-    let http = std::rc::Rc::new(Http::new());
+    let mut http = Http::new();
+    http.sleep_on_errors(true);
+    let http = std::rc::Rc::new(http);
     let done = socket.incoming()
         .for_each(|(sock, remote_addr)| {
             let h = handle.clone();
