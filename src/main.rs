@@ -419,12 +419,13 @@ impl_web! {
         }
 
         #[get("/library/*relative_path")]
-        #[content_type("application/octet-stream")]
-        //#[content_type("video/x-m4v")]
+        #[content_type("video/x-m4v")]
+        //#[content_type("application/octet-stream")]
         //  *res.header_mut(header::CONTENT_DISPOSITION, format!("attachment; filename=\"{}\"", filename).parse().unwrap())
-        //  Forcing the content type to utilize the default type of "application/octet-stream"
-        //  as octet-stream header will cause the browser to download the file rather then
-        //  attempt to play the video.
+        //  Attempted to forcing the content type to utilize the default type of
+        //  "application/octet-stream" as octet-stream header the browser will default to
+        //  downloading the file rather then attempt to play the video, however, it seems
+        //  that firefox is now automatically detecting the file type and still plays it.
         fn m4v(&self, auth: auth::Auth, relative_path: PathBuf) -> impl Future<Item = File, Error = io::Error> + Send {
             let mut path: PathBuf = ("vcms/".to_string() + &auth.id + "/library").into();
             path.push(relative_path);
