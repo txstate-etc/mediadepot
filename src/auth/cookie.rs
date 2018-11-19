@@ -1,9 +1,9 @@
-use hyper;
+use hyper::{ Request, header };
 use std::fmt;
 use std::time::Duration;
 use base64;
 use percent_encoding::{utf8_percent_encode, DEFAULT_ENCODE_SET};
-use key::Key;
+use super::key::Key;
 
 #[allow(dead_code)]
 #[derive(Clone, PartialEq, Debug)]
@@ -204,25 +204,34 @@ impl<'d, 'p> Cookie<'d, 'p> {
         })
     }
 
-    // https://docs.rs/hyper/0.11.6/hyper/header/struct.Cookie.html
     /// Create a cookie from a hyper request struct, if it exists within the request.
-    pub fn from_request(req: &hyper::Request, prefix: Option<CookiePrefix>, name: &str) -> Option<Cookie<'d, 'p>> {
-        if let Some(ref cookies) = req.headers().get::<hyper::header::Cookie>() {
+    pub fn from_request(req: &Request<()>, prefix: Option<CookiePrefix>, name: &str) -> Option<Cookie<'d, 'p>> {
+        if let Some(cookies) = req.headers().get(header::COOKIE) {
             let mut name = utf8_percent_encode(name, DEFAULT_ENCODE_SET).to_string();
             if let Some(prefix) = prefix {
                 name = prefix.to_string() + &name[..];
             }
-            if let Some(value) = cookies.get(&name[..]) {
-                return Some(Cookie{
-                    name: name,
-                    value: value.to_string(),
-                    domain: None,
-                    path: None,
-                    max_age: None,
-                    secure: false,
-                    http_only: false,
-                    same_site: None,
-                });
+            let tag = name.clone() + "=";
+            // WARN: There may be multiple Cookie headers, as well as multiple Cookie values per
+            //   header, as well as same names used within a single cookie header.
+            // We will only look at first cookie header, break it up and return the value from
+            //   the first name that matches.
+            // Example: Cookie: _ga=<google info>; _ga=<more google info>; __Host-id=<base64 representation of encrypted value>
+            if let Ok(cookies) = cookies.to_str() {
+                for cookie in cookies.split("; ") {
+                    if cookie.starts_with(&tag) {
+                        return Some(Cookie{
+                            value: cookie[tag.len()..].to_string(),
+                            name: name,
+                            domain: None,
+                            path: None,
+                            max_age: None,
+                            secure: false,
+                            http_only: false,
+                            same_site: None,
+                        });
+                    }
+                }
             }
         }
         None
@@ -312,9 +321,9 @@ mod tests {
         let prefix_encoded_name = "__Host-test%20name";
         let value = "Hello World";
         let value_encrypted = key.seal(prefix_encoded_name, value).unwrap();
-        let uri = hyper::Uri::from_str("https://localhost/").unwrap();
-        let mut req = hyper::Request::new(hyper::Method::Get, uri);
-        let mut cookies = hyper::header::Cookie::new();
+        let uri = Uri::from_str("https://localhost/").unwrap();
+        let mut req = Request::new(Method::Get, uri);
+        let mut cookies = header::Cookie::new();
         cookies.append(prefix_encoded_name, value_encrypted);
         {
           let headers = req.headers_mut();

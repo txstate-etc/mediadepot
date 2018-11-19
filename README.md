@@ -10,8 +10,8 @@ A hyper based server with CAS authentication that allows the user to download th
 
 ## Authenticated API points:
 * `/ - [GET]` This path is where the user will go to get their application and see what media files they created via the YouStar program.
-* `/library/<rest_of_file_path> - [GET|HEAD|DELETE]` This path is used bay a CAS authenticated user to manage the their files. They may check size (HEAD), download (GET), or remove (DELETE) them. Their id they used to authenticate and the path to the library directory will get prepended to this path to find the file requested. NOTE: DELETE may never be implemented depending on required features.
-* `/admin/<rest_of_file_path> - [GET|<HEAD>|DELETE]` This  path is used by an admin to view and access user files. The request is authorized with a Json Web Token relayed via Authorization Bearer http header. The rest of the path simulates the previous two "/" and "/library" API points. Generally a "/" request will be accompanied with a "application/json" Content Type.
+* `/library - [GET|<HEAD>|DELETE]` This path is used by an admin to view the list of user files. The request is authorized with a Json Web Token relayed via Authorization Bearer http header or session cookie setup via CAS login process. The reaponse will always be of "application/json" Content Type.
+* `/library/<rest_of_file_path> - [GET|HEAD|DELETE]` This path is used bay a CAS authenticated user or JWT admin to manage the their files. Their id used to authenticate is prepended to the library path to find the file requested. NOTE: DELETE method may never be implemented depending on required features.
 
 ## Environment variables:
 * `ADDRESS` This is the address and port that the server will bind. The default is `127.0.0.1:8443`
@@ -19,9 +19,12 @@ A hyper based server with CAS authentication that allows the user to download th
 * `JWTKEY` This is a base64 encoded 64 byte key used to sign JSON Web Tokens (JWT) for adminstrative requests via the `/admin` API. There is no default set for this and the service will terminate if one is not assigned. Example of generating JWT key: `openssl rand -base64 64`
 * `ROOTDIR` This is the directory where the `/resources` and `/vcms/<id>/library` directories are stored.  The default is `/var/lib/www`
 * `DOMAIN` This is the protocol, name of the server, and port that the user sees. An example would be `https://mediadepot.its.txstate.edu:8443` domain. The application will not start without this field being defined.
-* `CASURL` This is the address of the CAS server. An example would be `https://login.its.txstate.edu`, however, note that some universities require the cas path added to the end like `https://login.its.txstate.edu/cas` as their tomcat application is not running under the ROOT path but under rather the cas directory.
+* `CASURL` This is the address of the CAS server. An example would be `https://login.example.edu`, however, note that some universities require the cas path added to the end like `https://login.example.edu/cas` as their tomcat application is not running under the ROOT path but under rather the cas directory.
 * `SSL_CERT_FILE` /etc/ssl/certs/ca-certificates.crt
 * `SSL_CERT_DIR` /etc/ssl/certs
+* `CERTS_PUBLIC` This is the location of the public cert for mediadepot DOMAIN
+* `CERTS_PRIVATE` This is the location of the private key for the mediadepot DOMAIN
+* `RUST_LOG` This is used to define the logging level. Example of info level logging: "media_depot=info"
 
 ## ROOTDIR subdirectories:
 * `/resources` This is where the images, css, and other files that support the user interface reside.
