@@ -5,7 +5,7 @@ A hyper based server with CAS authentication that allows the user to download th
 
 ## Non-Authenticated API points:
 * `/health - [GET|HEAD]` This path lets us know that the server is running.
-* `/resources/<rest_of_file_path> - [GET|HEAD]` This path is where css and images are stored and served up.
+* `/static/<rest_of_file_path> - [GET|HEAD]` This path is where css and images are stored and served up.
 * `/logout - [GET]` This path is always available since user may be authenticated but not have authorization as not all users have an entry in the vcms directory. When the user gets directed here their session cookie will be removed and they will get redirected to the CAS logout application.
 
 ## Authenticated API points:
@@ -22,22 +22,16 @@ A hyper based server with CAS authentication that allows the user to download th
 * `CASURL` This is the address of the CAS server. An example would be `https://login.example.edu`, however, note that some universities require the cas path added to the end like `https://login.example.edu/cas` as their tomcat application is not running under the ROOT path but under rather the cas directory.
 * `SSL_CERT_FILE` /etc/ssl/certs/ca-certificates.crt
 * `SSL_CERT_DIR` /etc/ssl/certs
-* `CERTS_PUBLIC` This is the location of the public cert for mediadepot DOMAIN
-* `CERTS_PRIVATE` This is the location of the private key for the mediadepot DOMAIN
+* `CERTS_PUBLIC` This is the location of the public cert for mediadepot `DOMAIN`
+* `CERTS_PRIVATE` This is the location of the private key for the mediadepot `DOMAIN`
 * `RUST_LOG` This is used to define the logging level. Example of info level logging: "media_depot=info"
 
 ## ROOTDIR subdirectories:
-* `/resources` This is where the images, css, and other files that support the user interface reside.
-* `/private` This is where the SSL certificates are stored. Note that the application expects to use SSL and will not start without them.
-* `/vcms` This is where all the created video content will be placed. The filesystem is broken up into user id's. All user video content will be placed within a library directory under the associated user directory.
+* `/static` This is where the images, css, and other files that support the user interface reside.
+* `/vcms` This is where all the created video content will reside. The filesystem is broken up into user id's. All user video content will be placed within a library directory under the associated user directory.
 
 ## docker examples:
 ```
-docker build --target deploy -t ${TXSTATE_REGISTRY}/mediadepot:1.0.0 .
-docker run --rm --env-file ~+/www/env.txt --read-only -v ~+/www:/var/lib/www:ro -p 127.0.0.1:8443:8443 --name mediadepot ${TXSTATE_REGISTRY}/mediadepot:1.0.0
+docker build --target deploy -t ${TXSTATE_REGISTRY}/mediadepot:2.0.0 .
+docker run --rm --env-file ~+/www/env.txt --read-only -v ~+/www:/var/lib/www:ro -p 127.0.0.1:8443:443 --name mediadepot ${TXSTATE_REGISTRY}/mediadepot:2.0.0
 ```
-
-## Possible future design ideas
-
-### Trash implementation:
-The option to manage a trash directory has come up a few times. Currently a cron job runs at night that clears out older media after a few weeks. A simple way to implement this feature is to have the template filter/hide the files that extend past the client's public "purge" date. The admin interface that request the json feed will still send the full list of available files and thus all existing files may be accessible through the admin UI. The client UI that is managed via the template will not show the publicly "purged" files. This can be implemented with a simple if block in the template. We can then extend the private purge date a week; so we have a buffer from which the remote admin interface can still have access to them before they are actually deleted.
