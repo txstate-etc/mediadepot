@@ -496,7 +496,7 @@ dependencies = [
 
 [[package]]
 name = "mediadepot"
-version = "0.2.0"
+version = "2.0.0"
 dependencies = [
  "base64 0.6.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "bytes 0.4.10 (registry+https://github.com/rust-lang/crates.io-index)",
