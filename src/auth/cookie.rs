@@ -297,6 +297,7 @@ impl<'d, 'p> Cookie<'d, 'p> {
 mod tests {
     use super::*;
     use std::str::FromStr;
+    use hyper::{ Uri, Request, header };
 
     #[test]
     fn test_cookie_display() {
@@ -322,13 +323,11 @@ mod tests {
         let value = "Hello World";
         let value_encrypted = key.seal(prefix_encoded_name, value).unwrap();
         let uri = Uri::from_str("https://localhost/").unwrap();
-        let mut req = Request::new(Method::Get, uri);
-        let mut cookies = header::Cookie::new();
-        cookies.append(prefix_encoded_name, value_encrypted);
-        {
-          let headers = req.headers_mut();
-          headers.set(cookies);
-        }
+        let req = Request::builder()
+            .uri(uri)
+            .header(header::COOKIE, format!("{}={}", prefix_encoded_name, value_encrypted))
+            .body(())
+            .unwrap();
         // Create our Cookie from this request
         let cookie = Cookie::from_request(&req, Some(CookiePrefix::HOST), name).unwrap();
         // Test if we can retrieve original plain text value
