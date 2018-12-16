@@ -1,4 +1,4 @@
-#![feature(await_macro, async_await, futures_api, custom_attribute, proc_macro_hygiene, extern_crate_item_prelude, impl_trait_in_bindings)]
+#![feature(await_macro, async_await, futures_api, custom_attribute, proc_macro_hygiene, impl_trait_in_bindings)]
 
 #[macro_use]
 extern crate lazy_static;
@@ -475,7 +475,7 @@ pub fn main() {
         })
         .filter_map(|x| x);
 
-    println!("Listening on http://{}", addr);
+    println!("Listening on https://{}", addr);
     tokio::run({
         ServiceBuilder::new()
         .resource(router)

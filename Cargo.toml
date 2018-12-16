@@ -4,19 +4,22 @@ edition = "2018"
 version = "0.3.0"
 authors = ["Charles Tabor <chastabor@protonmail.com>"]
 
+[profile.release]
+lto = true
+
 [dependencies]
 lazy_static = "1.1.0"
-tower-web = { git = "https://github.com/txstate-etc/tower-web", rev = "f53583143f3", features = ["async-await-preview", "rustls"] }
+tower-web = { git = "https://github.com/carllerche/tower-web", rev = "2fee497a82a4", features = ["async-await-preview", "rustls"] }
 tokio = "0.1.10"
 hyper = "0.12.10"
-futures = "0.1.18"
-hyper-rustls = "0.14.0"
+futures = "0.1.21"
+hyper-rustls = "0.15.0"
 maud = "0.19.0"
-http = "0.1.7"
+http = "0.1.14"
 chrono = "0.4.2"
-serde = "1.0.44"
-serde_json = "1.0.17"
-serde_derive = "1.0.44"
+serde = "1.0.70"
+serde_json = "1.0.24"
+serde_derive = "1.0.70"
 humansize = "1.1.0"
 base64 = "0.6.0"
 ring  = "0.13.2"
