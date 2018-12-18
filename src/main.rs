@@ -1,6 +1,8 @@
 #![feature(await_macro, async_await, futures_api, custom_attribute, proc_macro_hygiene, impl_trait_in_bindings)]
 
 #[macro_use]
+extern crate futures;
+#[macro_use]
 extern crate lazy_static;
 #[macro_use]
 extern crate tower_web;
@@ -25,17 +27,28 @@ mod templates;
 mod auth;
 mod cas;
 
-use futures::{ Future, Stream };
+use std::fs::File as StdFile;
+use futures::{ IntoFuture, Future, Stream };
 use tokio::prelude::*;
 use tokio::{ await, net::TcpListener };
-use tower_web::{ ServiceBuilder, error::Error, middleware::log::LogMiddleware };
+use tower_web::{
+    ServiceBuilder,
+    error,
+    response::{
+        Response,
+        Serializer,
+        Context,
+    },
+    middleware::log::LogMiddleware,
+    util::BufStream,
+};
 use http;
-use std::{env, str, io, path::PathBuf};
+use std::{ env, str, io, path::PathBuf };
 use tokio::fs::{ File, metadata, read_dir };
 use hyper::{ Uri, Body };
 use hyper_rustls::HttpsConnector;
 use chrono::{ DateTime, Local, NaiveDate, Duration };
-use humansize::{ FileSize, file_size_opts} ;
+use humansize::{ FileSize, file_size_opts };
 use maud::{ html, Markup };
 use self::cas::{ CASResponse, CAS_URL, CASError };
 use self::auth::Auth;
@@ -50,6 +63,8 @@ use tokio_rustls::{
         internal::pemfile::{ certs, rsa_private_keys },
     },
 };
+use bytes::BytesMut;
+use tokio_io::AsyncRead;
 
 lazy_static! {
     static ref CERTS: Certs = Certs{
@@ -63,11 +78,11 @@ struct Certs {
 }
 
 fn load_certs(path: &str) -> Vec<Certificate> {
-    certs(&mut BufReader::new(std::fs::File::open(path).unwrap())).unwrap()
+    certs(&mut BufReader::new(StdFile::open(path).unwrap())).unwrap()
 }
 
 fn load_private_keys(path: &str) -> Vec<PrivateKey> {
-    rsa_private_keys(&mut BufReader::new(std::fs::File::open(path).unwrap())).unwrap()
+    rsa_private_keys(&mut BufReader::new(StdFile::open(path).unwrap())).unwrap()
 }
 
 // https://github.com/abonander/mime_guess/blob/master/src/mime_types.rs
@@ -93,6 +108,46 @@ struct Redirect {
     set_cookie: String,
     #[web(header)]
     location: String,
+}
+
+#[derive(Debug)]
+struct DownloadFile {
+    content_type: String,
+    content_disposition: String,
+    file: File,
+}
+
+impl Response for DownloadFile {
+    type Buf = io::Cursor<BytesMut>;
+    type Body = error::Map<File>;
+
+    fn into_http<S: Serializer>(self, _context: &Context<S>) -> Result<http::Response<Self::Body>, tower_web::Error> {
+        let content_type = http::header::HeaderValue::from_str(&self.content_type).unwrap();
+        let content_disposition = http::header::HeaderValue::from_str(&self.content_disposition).unwrap();
+        Ok(http::Response::builder()
+           .status(200)
+           .header(http::header::CONTENT_TYPE, content_type)
+           .header(http::header::CONTENT_DISPOSITION, content_disposition)
+           .body(error::Map::new(self.file))
+           .unwrap())
+    }
+}
+
+impl BufStream for DownloadFile {
+    type Item = io::Cursor<BytesMut>;
+    type Error = io::Error;
+
+    fn poll(&mut self) -> Poll<Option<Self::Item>, Self::Error> {
+        let mut v = BytesMut::with_capacity(8 * 1024);
+
+        let len = try_ready!(self.file.read_buf(&mut v));
+
+        if len == 0 {
+            Ok(Async::Ready(None))
+        } else {
+            Ok(Async::Ready(Some(io::Cursor::new(v))))
+        }
+    }
 }
 
 #[derive(Serialize, PartialEq, PartialOrd, Eq, Ord, Debug)]
@@ -419,18 +474,28 @@ impl_web! {
         }
 
         #[get("/library/*relative_path")]
-        #[content_type("video/x-m4v")]
-        //#[content_type("application/octet-stream")]
-        //  *res.header_mut(header::CONTENT_DISPOSITION, format!("attachment; filename=\"{}\"", filename).parse().unwrap())
-        //  Attempted to forcing the content type to utilize the default type of
-        //  "application/octet-stream" as octet-stream header the browser will default to
-        //  downloading the file rather then attempt to play the video, however, it seems
-        //  that firefox is now automatically detecting the file type and still plays it.
-        fn m4v(&self, auth: auth::Auth, relative_path: PathBuf) -> impl Future<Item = File, Error = io::Error> + Send {
-            let mut path: PathBuf = ("vcms/".to_string() + &auth.id + "/library").into();
-            path.push(relative_path);
-            self.static_files(path)
+        fn m4v(&self, auth: auth::Auth, relative_path: PathBuf) -> impl Future<Item = DownloadFile, Error = io::Error> {
+            let mut mid_path: PathBuf = ("vcms/".to_string() + &auth.id + "/library").into();
+            mid_path.push(relative_path.clone());
+            let mut path = self.root_dir.clone();
+            path.push(mid_path);
+            let filename = match relative_path.file_name() {
+                Some(f) => match f.to_str() {
+                    Some(f) => f,
+                    None => "default.m4v",
+                },
+                None => "default.m4v",
+            };
+            match StdFile::open(path) {
+                Ok(file) => Ok(DownloadFile {
+                    content_type: "video/x-m4v".to_string(),
+                    content_disposition: format!("attachment; filename=\"{}\"", filename),
+                    file: File::from_std(file),
+                }).into_future(),
+                Err(e) => Err(e).into_future(),
+            }
         }
+
     }
 }
 
@@ -480,7 +545,7 @@ pub fn main() {
         ServiceBuilder::new()
         .resource(router)
         .middleware(LogMiddleware::new("media_depot::web"))
-        .catch(move |req: &http::Request<()>, err: Error| {
+        .catch(move |req: &http::Request<()>, err: error::Error| {
             eprintln!("ERROR [Catch]: {:?}, {:?}", req, err);
             let (status, content) = if err.kind().is_not_found() {
                 (404, "Not Found")
