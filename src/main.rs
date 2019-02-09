@@ -39,7 +39,7 @@ use tower_web::{
         Serializer,
         Context,
     },
-    middleware::log::LogMiddleware,
+//    middleware::log::LogMiddleware,
     util::BufStream,
 };
 use http;
@@ -275,6 +275,7 @@ impl_web! {
         #[get("/logout")]
         #[content_type("json")]
         fn logout(&self) -> Result<Redirect, ()> {
+            eprintln!("/logout");
             Ok(Redirect{
                 set_cookie: Auth::clear_cookie().unwrap().to_string(),
                 location: self.cas.clone() + "/logout?url=" + &self.domain + "/",
@@ -287,6 +288,7 @@ impl_web! {
 
         #[get("/health")]
         fn health(&self) -> Result<String, ()> {
+            eprintln!("/health");
             Ok("Up".to_string())
         }
 
@@ -299,12 +301,14 @@ impl_web! {
         #[get("/favicon.ico")]
         #[content_type("image/x-icon")]
         fn favicon(&self) -> impl Future<Item = File, Error = io::Error> + Send {
+            eprintln!("/favicon.ico");
             self.static_files(FAVICON.into())
         }
 
         #[get("/static/jpg/*relative_path")]
         #[content_type("image/jpeg")]
         fn jpg(&self, relative_path: PathBuf) -> impl Future<Item = File, Error = io::Error> + Send {
+            eprintln!("/static/jpg/{:?}", relative_path);
             let mut path: PathBuf = "static/jpg".into();
             path.push(relative_path);
             self.static_files(path)
@@ -313,6 +317,7 @@ impl_web! {
         #[get("/static/css/*relative_path")]
         #[content_type("text/css")]
         fn css(&self, relative_path: PathBuf) -> impl Future<Item = File, Error = io::Error> + Send {
+            eprintln!("/static/css/{:?}", relative_path);
             let mut path: PathBuf = "static/css".into();
             path.push(relative_path);
             self.static_files(path)
@@ -321,6 +326,7 @@ impl_web! {
         #[get("/error/:err")]
         #[content_type("text/html")]
         fn error(&self, err: String) -> Result<String, ()> {
+            eprintln!("/error/{}", err);
             let content = match err.as_ref() {
                 "auth" => "CAS login service was unable to successfully authenticate your account. You may wish to retry and login again.",
                 "encode" => "CAS login service is not responding properly. You may wish to retry and login again.",
@@ -350,7 +356,9 @@ impl_web! {
         #[get("/cas/")]
         #[content_type("json")]
         async fn cas_no_path(&self, cas_info: CASResponse) -> Redirect {
-            let auth = await!(self.cas_verify_ticket("/".into(), cas_info));
+            eprintln!("/cas/, CAS: {:?} -- pending CAS Auth response", cas_info);
+            let auth = await!(self.cas_verify_ticket("/".into(), cas_info.clone()));
+            eprintln!("/cas/, CAS: {:?}, AUTH: {:?}", cas_info, auth);
             match auth {
                 Ok(auth) => Redirect{
                     set_cookie: auth.create_cookie().unwrap().to_string(),
@@ -382,7 +390,9 @@ impl_web! {
         #[content_type("json")]
         async fn cas_full_path(&self, full_path: PathBuf, cas_info: CASResponse) -> Redirect {
             let path = full_path.to_str().unwrap_or("/");
-            let auth = await!(self.cas_verify_ticket(path.into(), cas_info));
+            eprintln!("/cas/{}, CAS: {:?} -- pending CAS Auth response", path, cas_info);
+            let auth = await!(self.cas_verify_ticket(path.into(), cas_info.clone()));
+            eprintln!("/cas/{}, CAS: {:?}, AUTH: {:?}", path, cas_info, auth);
             match auth {
                 Ok(auth) => Redirect{
                     set_cookie: auth.create_cookie().unwrap().to_string(),
@@ -456,6 +466,7 @@ impl_web! {
         #[get("/")]
         #[content_type("text/html")]
         async fn index(&self, auth: auth::Auth) -> String {
+            eprintln!("/, AUTH: {:?}", auth);
             let mut path = self.root_dir.clone();
             let relative_path: PathBuf = ("vcms/".to_string() + &auth.id + "/library").into();
             path.push(relative_path);
@@ -466,6 +477,7 @@ impl_web! {
         #[get("/library")]
         #[content_type("application/json")]
         async fn library(&self, auth: auth::Auth) -> Vec<Media> {
+            eprintln!("/library, AUTH: {:?}", auth);
             let mut path = self.root_dir.clone();
             let relative_path: PathBuf = ("vcms/".to_string() + &auth.id + "/library").into();
             path.push(relative_path);
@@ -475,6 +487,7 @@ impl_web! {
 
         #[get("/library/*relative_path")]
         fn m4v(&self, auth: auth::Auth, relative_path: PathBuf) -> impl Future<Item = DownloadFile, Error = io::Error> {
+            eprintln!("/library/{:?}, AUTH: {:?}", relative_path, auth);
             let mut mid_path: PathBuf = ("vcms/".to_string() + &auth.id + "/library").into();
             mid_path.push(relative_path.clone());
             let mut path = self.root_dir.clone();
@@ -495,7 +508,6 @@ impl_web! {
                 Err(e) => Err(e).into_future(),
             }
         }
-
     }
 }
 
@@ -544,12 +556,12 @@ pub fn main() {
     tokio::run({
         ServiceBuilder::new()
         .resource(router)
-        .middleware(LogMiddleware::new("media_depot::web"))
+//        .middleware(LogMiddleware::new("media_depot::web"))
         .catch(move |req: &http::Request<()>, err: error::Error| {
             eprintln!("ERROR [Catch]: {:?}, {:?}", req, err);
-            let (status, content) = if err.kind().is_not_found() {
+            let (status, content) = if err.status_code() == http::StatusCode::NOT_FOUND {
                 (404, "Not Found")
-            } else if err.kind().is_bad_request() {
+            } else if err.status_code() == http::StatusCode::BAD_REQUEST {
                 (400, "Bad Request")
             } else {
                 (500, "Internal Server Error")

@@ -1,4 +1,4 @@
-use ring::aead::{seal_in_place, open_in_place, Algorithm, AES_256_GCM};
+use ring::aead::{seal_in_place, open_in_place, Algorithm, AES_256_GCM, Nonce, Aad};
 use ring::aead::{OpeningKey, SealingKey};
 use ring::rand::{SecureRandom, SystemRandom};
 use base64;
@@ -50,7 +50,7 @@ impl Key {
         let mut output = vec![0; NONCE_LEN + value.len() + tag];
 
         // Use key as associated value to prevent swapping value between index_keys/key.
-        let ad = key.as_bytes();
+        let aad = Aad::from(key.as_bytes());
 
         // scope split of output into nonce and in_out; so later we can reuse output
         let output_len = {
@@ -64,7 +64,7 @@ impl Key {
             in_out[..value.len()].copy_from_slice(value);
 
             // Perform the actual sealing operation and get the output length.
-            seal_in_place(&(&self.seal_key), nonce, ad, in_out, tag)
+            seal_in_place(&(&self.seal_key), Nonce::try_assume_unique_for_key(nonce).map_err(|_| "Nonce incorrect length")?, aad, in_out, tag)
                 .map_err(|_| "in-place seal")?
         };
 
@@ -83,9 +83,9 @@ impl Key {
             return Err("Length of decoded value is less then length of nonce");
         }
 
-        let ad = key.as_bytes();
+        let aad = Aad::from(key.as_bytes());
         let (nonce, sealed) = value.split_at_mut(NONCE_LEN);
-        let unsealed = open_in_place(&(&self.open_key), nonce, ad, 0, sealed)
+        let unsealed = open_in_place(&(&self.open_key), Nonce::try_assume_unique_for_key(nonce).map_err(|_| "Nonce incorrect length")?, aad, 0, sealed)
             .map_err(|_| "Invalid sealed key/nonce/ad/value.")?;
 
         ::std::str::from_utf8(unsealed)

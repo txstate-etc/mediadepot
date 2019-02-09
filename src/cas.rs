@@ -13,7 +13,7 @@ lazy_static! {
 }
 
 //#[derive(Extract)]
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct CASResponse {
 //    #[web(header)]
 //    pub referer: String,
