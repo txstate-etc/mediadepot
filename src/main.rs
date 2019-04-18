@@ -422,7 +422,7 @@ impl_web! {
 
         async fn cas_verify_ticket(&self, path: String, cas_info: CASResponse) -> Result<Auth, CASError> {
             let url = self.cas.clone()
-                + "/p3/serviceValidate"
+                + "/serviceValidate"
                 + "?ticket=" + &utf8_percent_encode(&cas_info.ticket, DEFAULT_ENCODE_SET).to_string()[..]
                 + "&service=" + &utf8_percent_encode(&(self.domain.clone() + "/cas" + &path), DEFAULT_ENCODE_SET).to_string()[..];
 
@@ -457,6 +457,7 @@ impl_web! {
                 }
             } else {
                 // CAS XML response returned a non200 status code
+                eprintln!("CAS RES: {:?}", res);
                 Err(CASError::InvalidStatus)
             }
         }
@@ -548,6 +549,7 @@ pub fn main() {
             Err(e) => {
                 eprintln!("ERROR [TLS]: {:?}", e);
                 Ok(None)
+                // Err(e) // This should cause the service to die
             },
         })
         .filter_map(|x| x);
